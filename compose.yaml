@@ -1,0 +1,67 @@
+x-aws-environment: &aws-environment
+  AWS_ENDPOINT_URL: http://floci:4566
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+  # Dummy credentials belong only to this local emulator stack, never real AWS.
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local
+  AWS_EC2_METADATA_DISABLED: "true"
+  DYNAMODB_TABLE_NAME: ${DYNAMODB_TABLE_NAME:-document-jobs}
+  AWS_CONNECT_TIMEOUT: ${AWS_CONNECT_TIMEOUT:-2}
+  AWS_READ_TIMEOUT: ${AWS_READ_TIMEOUT:-3}
+  AWS_MAX_ATTEMPTS: ${AWS_MAX_ATTEMPTS:-3}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  floci:
+    image: floci/floci:2.4.0
+    environment:
+      FLOCI_STORAGE_MODE: persistent
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+      FLOCI_HOSTNAME: floci
+      FLOCI_SERVICES_UI_ENABLED: "false"
+    volumes:
+      - floci-data:/app/data
+    # Use the pinned image's built-in healthcheck. No host ports or Docker socket.
+
+  dynamodb-bootstrap:
+    build:
+      context: .
+      target: runtime
+    command: ["python", "infra/local/init_dynamodb.py"]
+    environment: *aws-environment
+    depends_on:
+      floci:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: runtime
+    environment: *aws-environment
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      dynamodb-bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      <<: *aws-environment
+      RUN_FLOCI_TESTS: "1"
+    depends_on:
+      dynamodb-bootstrap:
+        condition: service_completed_successfully
+
+volumes:
+  floci-data:

@@ -12,3 +12,6 @@ wheels/
 # Virtual environments and local config
 .venv/
 .env
+.env.*
+!.env.example
+.mypy_cache/

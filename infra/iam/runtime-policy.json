@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["dynamodb:GetItem", "dynamodb:PutItem"],
+    "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/TABLE_NAME",
+    "Condition": {
+      "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["JOB#*"]}
+    }
+  }]
+}
