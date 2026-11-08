@@ -11,8 +11,12 @@ from event_driven_document_processor.modules.documents.application.errors import
     PersistenceDataError,
     PersistenceUnavailableError,
 )
+from event_driven_document_processor.modules.documents.application.ports import JobRepository
 from event_driven_document_processor.modules.documents.domain.enums import DocumentStatus
-from event_driven_document_processor.modules.documents.domain.models import DocumentJob
+from event_driven_document_processor.modules.documents.domain.models import (
+    DocumentJob,
+    S3ObjectReference,
+)
 
 if TYPE_CHECKING:
     from mypy_boto3_dynamodb import DynamoDBClient
@@ -37,7 +41,7 @@ def _log_failure(operation: str, job_id: UUID, error: BotoCoreError | ClientErro
     )
 
 
-class DynamoDBJobRepository:
+class DynamoDBJobRepository(JobRepository):
     """Store immutable jobs behind the unchanged save/get repository contract."""
 
     def __init__(self, client: DynamoDBClient, table_name: str) -> None:
@@ -55,6 +59,11 @@ class DynamoDBJobRepository:
             "status": {"S": job.status.value},
             "created_at": {"S": job.created_at.isoformat()},
         }
+        if job.object_reference is not None:
+            item["object_reference"] = {"M": {
+                "bucket": {"S": job.object_reference.bucket},
+                "key": {"S": job.object_reference.key},
+            }}
         try:
             self._client.put_item(TableName=self._table_name, Item=item)
         except (BotoCoreError, ClientError) as error:
@@ -89,6 +98,12 @@ class DynamoDBJobRepository:
         if created_at.tzinfo is None or created_at.utcoffset() is None:
             raise ValueError("Timestamp must include timezone")
         description = item["description"]
+        reference = None
+        if "object_reference" in item:
+            stored_reference = item["object_reference"]["M"]
+            reference = S3ObjectReference(
+                bucket=stored_reference["bucket"]["S"], key=stored_reference["key"]["S"],
+            )
         return DocumentJob(
             job_id=stored_id,
             filename=item["filename"]["S"],
@@ -96,4 +111,5 @@ class DynamoDBJobRepository:
             description=None if description.get("NULL") is True else description["S"],
             status=DocumentStatus(item["status"]["S"]),
             created_at=created_at,
+            object_reference=reference,
         )

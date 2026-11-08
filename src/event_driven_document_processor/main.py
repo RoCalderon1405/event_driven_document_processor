@@ -10,6 +10,8 @@ from event_driven_document_processor.bootstrap.settings import get_settings
 from event_driven_document_processor.modules.documents.application.errors import (
     PersistenceDataError,
     PersistenceUnavailableError,
+    UploadAuthorizationUnavailableError,
+    UploadValidationError,
 )
 
 
@@ -22,6 +24,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="EventDriven Document Processor", version="0.1.0", lifespan=lifespan)
 app.include_router(api_router)
+
+
+@app.exception_handler(UploadValidationError)
+async def upload_validation_error(request: Request, error: UploadValidationError) -> JSONResponse:
+    """Application validation messages are fixed text, never echoed SDK/request payloads."""
+    return JSONResponse(
+        status_code=422, content={"detail": str(error)}, headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.exception_handler(UploadAuthorizationUnavailableError)
+async def upload_unavailable(
+    request: Request, error: UploadAuthorizationUnavailableError,
+) -> JSONResponse:
+    """Hide all credentials, endpoints, and signing material on authorization failures."""
+    return JSONResponse(
+        status_code=503, content={"detail": "Upload authorization temporarily unavailable"},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.exception_handler(PersistenceUnavailableError)

@@ -4,5 +4,13 @@
     "Effect": "Allow",
     "Action": ["dynamodb:CreateTable", "dynamodb:DescribeTable"],
     "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/TABLE_NAME"
+  }, {
+    "Effect": "Allow",
+    "Action": [
+      "s3:CreateBucket", "s3:ListBucket", "s3:GetBucketLocation",
+      "s3:PutBucketPublicAccessBlock", "s3:PutBucketOwnershipControls",
+      "s3:DeleteBucketPolicy", "s3:PutEncryptionConfiguration", "s3:PutBucketCORS"
+    ],
+    "Resource": "arn:aws:s3:::BUCKET_NAME"
   }]
 }

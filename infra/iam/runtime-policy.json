@@ -7,5 +7,9 @@
     "Condition": {
       "ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["JOB#*"]}
     }
+  }, {
+    "Effect": "Allow",
+    "Action": ["s3:PutObject"],
+    "Resource": "arn:aws:s3:::BUCKET_NAME/quarantine/*"
   }]
 }

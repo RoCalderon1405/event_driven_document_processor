@@ -14,10 +14,16 @@ An event-driven document-processing API built with Python and FastAPI. The syste
 - Validated environment settings, bounded SDK retries/timeouts, and sanitized storage errors
 - In-memory persistence for isolated unit and HTTP contract tests
 - Unit, HTTP contract, and opt-in Floci integration tests
+- Direct private S3 uploads using short-lived presigned POST policies
 
-The current application creates **metadata-only jobs**. Files are not uploaded or processed yet.
-S3, queues, workers, deduplication, and callbacks are not implemented. No real AWS deployment
+The original creation endpoint still creates **metadata-only jobs**. The new upload endpoint
+creates pending jobs and authorization for direct S3 uploads. Files are not validated or processed.
+Queues, workers, deduplication, and callbacks are not implemented. No real AWS deployment
 is included. See [project status](docs/PROJECT_STATUS.md) for actual verification results.
+
+**Local development only:** authorization issuance has no authentication, ownership checks,
+quotas, or rate limits. Do not expose this stack publicly; a private bucket alone does not
+prevent an unauthenticated caller from obtaining upload authorization.
 
 ## Requirements
 
@@ -31,10 +37,11 @@ is included. See [project status](docs/PROJECT_STATUS.md) for actual verificatio
 docker compose up --build -d --wait api
 ```
 
-This starts Floci 2.4.0, waits for its healthcheck, runs the one-shot DynamoDB bootstrap,
+This starts Floci 2.4.0, waits for its healthcheck, runs the one-shot DynamoDB/S3 bootstrap,
 then starts the non-root API container. The initializer can run repeatedly without clearing
-jobs and rejects incompatible table schemas. Only `127.0.0.1:8000` is published; Floci is
-reachable only within the Compose network. No Docker socket or AWS profile is mounted.
+jobs and rejects incompatible table schemas. The API is published on `127.0.0.1:8000` and
+Floci's shared AWS gateway on `127.0.0.1:4566` for host uploads. Neither is published on all
+interfaces. No Docker socket or AWS profile is mounted. Existing named-volume data is retained.
 
 API documentation: http://127.0.0.1:8000/docs
 
@@ -59,13 +66,28 @@ reads the application's process environment; it does not load `.env` itself. Com
 - `AWS_MAX_ATTEMPTS=3` (total SDK attempts, including the first; permitted range 1–5).
 - `LOG_LEVEL=INFO`; SDK wire/debug logging remains disabled even at application `DEBUG`.
 - `API_PORT=8000` controls the localhost published port, not the container's listening port.
+- `S3_INTERNAL_ENDPOINT_URL=http://floci:4566` is used for provisioning/internal operations.
+- `S3_PUBLIC_ENDPOINT_URL=http://localhost:4566` is used to generate host-facing authorization.
+  Generated URLs are never rewritten. Container tests instead sign for `http://floci:4566`.
+- `S3_BUCKET_NAME=document-uploads` names a dedicated private quarantine bucket.
+- `UPLOAD_MAX_FILE_SIZE_BYTES=10485760` (10 MiB) and `UPLOAD_EXPIRES_IN_SECONDS=300`
+  (configurable 1–900 seconds). Expiration may occur earlier if signing credentials expire.
+- `UPLOAD_ALLOWED_CONTENT_TYPES=["application/pdf","image/png","image/jpeg"]` may narrow
+  supported types. It does not change the legacy metadata endpoint's validation.
+- `S3_CORS_ALLOWED_ORIGINS=[]` disables browser cross-origin uploads by default. To enable a
+  browser client, explicitly set origins such as `["http://localhost:3000"]`; no wildcard,
+  credentials in origins, paths, query strings, or trailing slash. Only POST is permitted.
+  This configures S3 CORS only; use a same-origin API/proxy for issuing authorization, since
+  cross-origin FastAPI access has not been enabled in this milestone.
 
-Compose intentionally uses dummy `local` credentials instead of inheriting host credentials.
+Compose intentionally uses dummy `test/test` credentials instead of inheriting host credentials,
+with `FLOCI_SERVICES_S3_ENFORCE_AUTH=true`. Do not disable authentication to fix failing tests.
 Outside Compose, boto3 uses its standard credential provider chain, including environment
 credentials or workload roles. Never put real credentials in source, `.env.example`, or images.
 Runtime configuration/wiring lives in `bootstrap/`; local provisioning lives in `infra/local/`.
 For host-based API development, explicitly configure a reachable local endpoint, region, and
-dummy credentials before `uv run fastapi dev`; Floci has no published port by default.
+dummy `test/test` credentials before `uv run fastapi dev`. Both host S3 endpoints should be
+`http://localhost:4566`; do not use the Docker hostname in browser-facing authorization.
 
 ### Floci integration and persistence verification
 
@@ -73,17 +95,27 @@ dummy credentials before `uv run fastapi dev`; Floci has no published port by de
 docker compose --profile test run --build --rm tests
 docker compose --profile test run --rm tests uv run --no-sync ruff check .
 uv run python infra/local/verify_persistence.py
+uv run python infra/local/verify_upload.py
 ```
 
 The test service opts into Floci tests via `RUN_FLOCI_TESTS=1`. Tests create unique
 `document-jobs-test-*` tables, repeat initialization, exercise boto3 and HTTP round trips,
 and delete only their own tables. Explicitly selected Floci tests fail rather than silently
 skip if their configured endpoint is unavailable. Do not point them at a real AWS account.
+S3 tests use unique disposable buckets and real HTTP multipart/form-data uploads. Negative
+tests cover exact file sizes, modified keys/types, tampered signatures/policies, expiration,
+unsigned writes, and anonymous reads. They also demonstrate replay and untrusted MIME labels.
+One strict expected-failure test records a Floci 2.4.0 gap: POST-created objects do not report
+the bucket's default SSE encryption metadata. Bucket encryption configuration is tested, but
+the emulator does not establish actual encryption at rest; verify that separately on AWS.
 
 The persistence script starts/builds the stack, creates a job over HTTP, restarts the API,
 recreates the Floci container, reruns bootstrap, and verifies identical job responses.
 It leaves the stack, volume, and verification job intact. Set `API_PORT` in the invoking
 shell too if you changed the port in `.env` (the script reads process environment).
+The upload smoke test uses the actual API-issued localhost URL without rewriting it, verifies
+anonymous denial, recreates Floci, reruns bootstrap, and checks retained job responses and
+object bytes. Both smoke scripts leave verification jobs/objects and the named volume intact.
 
 Floci runs with `FLOCI_STORAGE_MODE=persistent` and
 `FLOCI_STORAGE_PERSISTENT_PATH=/app/data`, backed by the `floci-data` named volume.
@@ -120,6 +152,64 @@ AWS durability or backup guarantee.
 
 The `job_id` and `created_at` values are generated on each request. `filename` is the canonical request field; `file_name` is also accepted for compatibility with earlier clients.
 
+### Create a job and obtain direct-upload authorization
+
+`POST /api/v1/documents/uploads`
+
+```json
+{
+  "filename": "contract.pdf",
+  "content_type": "application/pdf",
+  "file_size_bytes": 12345,
+  "description": "Signed contract"
+}
+```
+
+Returns **201 Created**, with `Cache-Control: no-store`:
+
+```json
+{
+  "job": {
+    "job_id": "550e8400-e29b-41d4-a716-446655440000",
+    "filename": "contract.pdf",
+    "content_type": "application/pdf",
+    "description": "Signed contract",
+    "status": "PENDING",
+    "created_at": "2026-11-07T15:00:00Z"
+  },
+  "upload": {
+    "method": "POST",
+    "url": "http://localhost:4566/document-uploads",
+    "fields": {"key": "quarantine/<job-id>/<random-id>", "policy": "<policy>", "x-amz-signature": "<signature>"},
+    "expires_in_seconds": 300
+  }
+}
+```
+
+The example abbreviates `fields`. Submit **every actual returned field unchanged**, then the
+file, to the returned URL as `multipart/form-data`. Do not manually set the HTTP multipart
+`Content-Type` header: the client must add its boundary. Browser example:
+
+```javascript
+const form = new FormData();
+for (const [name, value] of Object.entries(result.upload.fields)) form.append(name, value);
+form.append("file", file);
+const response = await fetch(result.upload.url, { method: "POST", body: form });
+if (!response.ok) throw new Error("S3 rejected the upload");
+```
+
+The declared size must be a positive JSON integer (not a boolean, string, or float), at most
+the configured limit. S3 policy binds **the file bytes**, not the full multipart request size,
+to that exact length and the exact declared Content-Type. Filename is display metadata only;
+paths/control characters and client-supplied bucket/key/ACL controls are rejected.
+
+An expired authorization requires creating a new upload job; there is no renewal or confirmation
+endpoint. Authorizations are **replayable until expiration** and can overwrite the same object
+with another payload satisfying the policy. Upload success does not change `PENDING` or prove
+the document is valid: MIME metadata is untrusted, and future processing must inspect actual
+bytes and malicious content before treating quarantine objects as safe. Never log or share
+authorization fields. S3 errors are returned by S3 directly, not translated by FastAPI.
+
 ### Retrieve a job
 
 `GET /api/v1/documents/{job_id}`
@@ -155,6 +245,10 @@ The DynamoDB table has one string partition key, `pk`, containing `JOB#{job_id}`
 statuses, and timezone-aware timestamps are mapped inside the adapter. `HASH#{sha256}` is
 reserved for future duplicate detection; no hash items are created in this milestone.
 The `JobRepository` Protocol and domain remain storage/framework independent.
+Upload use cases depend on a narrow `UploadAuthorizer` Protocol, implemented by the boto3 S3
+adapter. An optional frozen `S3ObjectReference` is saved with the initial job; old items missing
+that attribute remain readable. Signing URLs/policies/fields are never persisted. The existing
+GET response intentionally does not expose the new internal object reference.
 
 See [the storage decision](docs/decisions/0001-local-dynamodb.md) and
 [repository guidance](AGENTS.md). The IAM templates in `infra/iam/` require replacing
@@ -163,12 +257,18 @@ See [the storage decision](docs/decisions/0001-local-dynamodb.md) and
 separately. These policies are examples, not deployed policies. Floci's dummy credentials
 are not evidence of real AWS IAM enforcement. Integration tests additionally need table
 creation/deletion permissions and must remain isolated from development/production data.
+Runtime signing additionally needs only `s3:PutObject` on `BUCKET_NAME/quarantine/*`; the
+separate privileged verification inspector reads bytes only for testing. Bootstrap manages
+the dedicated bucket's entire security configuration: all Block Public Access flags,
+BucketOwnerEnforced, no bucket policy, SSE-S3, and explicit CORS. Do not point it at shared
+buckets. It does not delete objects. See [the upload security ADR](docs/decisions/0002-secure-uploads.md).
 
 ## Next capabilities
 
-1. Presigned S3 uploads and S3 event notifications
-2. SQS-driven Lambda/worker processing and document validation
-3. SHA-256 deduplication, idempotency, retries, and DLQ
-4. Reliable webhook delivery, expanded observability, and CI
+1. Authentication, ownership checks, quotas, and rate limits before any public deployment
+2. Upload confirmation/content validation and eventual event notifications
+3. SQS-driven Lambda/worker processing and document validation
+4. SHA-256 deduplication, idempotency, retries, and DLQ
+5. Reliable webhook delivery, expanded observability, and CI
 
 No AWS infrastructure has been deployed.

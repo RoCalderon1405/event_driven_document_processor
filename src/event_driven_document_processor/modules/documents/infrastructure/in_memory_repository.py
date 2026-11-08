@@ -1,10 +1,11 @@
 from threading import Lock
 from uuid import UUID
 
+from event_driven_document_processor.modules.documents.application.ports import JobRepository
 from event_driven_document_processor.modules.documents.domain.models import DocumentJob
 
 
-class InMemoryJobRepository:
+class InMemoryJobRepository(JobRepository):
     def __init__(self) -> None:
         self._jobs: dict[UUID, DocumentJob] = {}
         self._lock = Lock()

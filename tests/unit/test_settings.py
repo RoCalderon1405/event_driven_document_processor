@@ -36,8 +36,8 @@ def test_invalid_settings(field: str, value: object) -> None:
 
 
 def test_client_has_bounded_sdk_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "local")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "local")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
     settings = Settings(aws_endpoint_url="http://floci:4566", aws_max_attempts=2)
     client = create_dynamodb_client(settings)
     try:

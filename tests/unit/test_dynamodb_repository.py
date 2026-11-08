@@ -18,7 +18,10 @@ from event_driven_document_processor.modules.documents.application.errors import
     PersistenceUnavailableError,
 )
 from event_driven_document_processor.modules.documents.domain.enums import DocumentStatus
-from event_driven_document_processor.modules.documents.domain.models import DocumentJob
+from event_driven_document_processor.modules.documents.domain.models import (
+    DocumentJob,
+    S3ObjectReference,
+)
 from event_driven_document_processor.modules.documents.infrastructure.dynamodb_repository import (
     DynamoDBJobRepository,
 )
@@ -29,8 +32,8 @@ def aws_client() -> Iterator[DynamoDBClient]:
     client = boto3.client(
         "dynamodb",
         region_name="us-east-1",
-        aws_access_key_id="local",
-        aws_secret_access_key="local",
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
     )
     yield client
     client.close()
@@ -169,6 +172,35 @@ def test_corrupt_data_is_explicit(
 def test_missing_stored_attribute_is_explicit(aws_client: DynamoDBClient, job: DocumentJob) -> None:
     item = item_for(job)
     del item["filename"]
+    with Stubber(aws_client) as stub:
+        stub.add_response("get_item", {"Item": item})
+        with pytest.raises(PersistenceDataError):
+            DynamoDBJobRepository(aws_client, "jobs").get(job.job_id)
+
+
+def test_optional_object_reference_roundtrip(aws_client: DynamoDBClient, job: DocumentJob) -> None:
+    reference = S3ObjectReference("test-uploads", f"quarantine/{job.job_id}/opaque")
+    job = replace(job, object_reference=reference)
+    item = item_for(job)
+    item["object_reference"] = {"M": {
+        "bucket": {"S": reference.bucket}, "key": {"S": reference.key},
+    }}
+    with Stubber(aws_client) as stub:
+        stub.add_response("put_item", {}, {"TableName": "jobs", "Item": item})
+        stub.add_response("get_item", {"Item": item})
+        repository = DynamoDBJobRepository(aws_client, "jobs")
+        repository.save(job)
+        assert repository.get(job.job_id) == job
+
+
+@pytest.mark.parametrize("reference", [{"NULL": True}, {"M": {}}, {"M": {
+    "bucket": {"S": ""}, "key": {"S": "quarantine/opaque"},
+}}])
+def test_corrupt_object_reference_is_explicit(
+    aws_client: DynamoDBClient, job: DocumentJob, reference: dict,
+) -> None:
+    item = item_for(job)
+    item["object_reference"] = reference
     with Stubber(aws_client) as stub:
         stub.add_response("get_item", {"Item": item})
         with pytest.raises(PersistenceDataError):

@@ -2,14 +2,21 @@ x-aws-environment: &aws-environment
   AWS_ENDPOINT_URL: http://floci:4566
   AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
   # Dummy credentials belong only to this local emulator stack, never real AWS.
-  AWS_ACCESS_KEY_ID: local
-  AWS_SECRET_ACCESS_KEY: local
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
   AWS_EC2_METADATA_DISABLED: "true"
   DYNAMODB_TABLE_NAME: ${DYNAMODB_TABLE_NAME:-document-jobs}
   AWS_CONNECT_TIMEOUT: ${AWS_CONNECT_TIMEOUT:-2}
   AWS_READ_TIMEOUT: ${AWS_READ_TIMEOUT:-3}
   AWS_MAX_ATTEMPTS: ${AWS_MAX_ATTEMPTS:-3}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  S3_INTERNAL_ENDPOINT_URL: http://floci:4566
+  S3_PUBLIC_ENDPOINT_URL: http://localhost:4566
+  S3_BUCKET_NAME: ${S3_BUCKET_NAME:-document-uploads}
+  UPLOAD_MAX_FILE_SIZE_BYTES: ${UPLOAD_MAX_FILE_SIZE_BYTES:-10485760}
+  UPLOAD_EXPIRES_IN_SECONDS: ${UPLOAD_EXPIRES_IN_SECONDS:-300}
+  UPLOAD_ALLOWED_CONTENT_TYPES: '${UPLOAD_ALLOWED_CONTENT_TYPES:-["application/pdf","image/png","image/jpeg"]}'
+  S3_CORS_ALLOWED_ORIGINS: '${S3_CORS_ALLOWED_ORIGINS:-[]}'
 
 services:
   floci:
@@ -19,15 +26,18 @@ services:
       FLOCI_STORAGE_PERSISTENT_PATH: /app/data
       FLOCI_HOSTNAME: floci
       FLOCI_SERVICES_UI_ENABLED: "false"
+      FLOCI_SERVICES_S3_ENFORCE_AUTH: "true"
+    ports:
+      - "127.0.0.1:4566:4566"
     volumes:
       - floci-data:/app/data
-    # Use the pinned image's built-in healthcheck. No host ports or Docker socket.
+    # Built-in healthcheck; the shared emulator gateway is loopback-only. No Docker socket.
 
   dynamodb-bootstrap:
     build:
       context: .
       target: runtime
-    command: ["python", "infra/local/init_dynamodb.py"]
+    command: ["python", "infra/local/bootstrap.py"]
     environment: *aws-environment
     depends_on:
       floci:
@@ -59,6 +69,8 @@ services:
     environment:
       <<: *aws-environment
       RUN_FLOCI_TESTS: "1"
+      # TestClient uploads originate inside this container; sign that exact endpoint.
+      S3_PUBLIC_ENDPOINT_URL: http://floci:4566
     depends_on:
       dynamodb-bootstrap:
         condition: service_completed_successfully

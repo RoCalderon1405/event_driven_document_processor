@@ -26,3 +26,25 @@ class DocumentJobResponse(BaseModel):
     description: str | None
     status: DocumentStatus
     created_at: datetime
+
+
+class CreateUploadRequest(CreateDocumentRequest):
+    """Upload metadata only; files are sent directly to S3, never to this endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_size_bytes: int = Field(strict=True, gt=0)
+
+
+class UploadAuthorizationResponse(BaseModel):
+    """POST form instructions. All fields must be submitted unchanged to S3."""
+
+    method: Literal["POST"] = "POST"
+    url: str
+    fields: dict[str, str]
+    expires_in_seconds: int
+
+
+class CreateUploadResponse(BaseModel):
+    job: DocumentJobResponse
+    upload: UploadAuthorizationResponse

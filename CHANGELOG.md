@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — Milestone 3
+
+- Added a compatible create-and-authorize upload endpoint with private, short-lived presigned
+  POST policies, exact MIME/file-length constraints, opaque quarantine keys, and no-store responses.
+- Added a narrow UploadAuthorizer Protocol, explicit adapter implementations, and immutable
+  optional object references with backward-compatible DynamoDB serialization. Signing fields
+  are excluded from persistence and authorization repr output.
+- Added validated S3/upload settings, closed-by-default browser CORS, separate internal/public
+  endpoints, and sanitized signing failures while preserving metadata-only API behavior.
+- Extended local bootstrap with idempotent private-bucket provisioning, Block Public Access,
+  BucketOwnerEnforced, SSE-S3, and CORS configuration. Enabled strict S3 authentication in
+  pinned Floci 2.4.0 using test/test credentials, with the gateway published on loopback only.
+- Added unit and real-HTTP Floci upload security tests and a host-facing upload/recreation
+  verification script. Documented replay, untrusted MIME metadata, and public-deployment blockers.
+
 ## Unreleased — Milestone 2
 
 - Added a boto3 DynamoDB repository with `pk = JOB#{job_id}`, strongly consistent reads,
