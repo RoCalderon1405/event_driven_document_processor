@@ -1,5 +1,84 @@
 # Project status
 
+## Milestone 4 Phase 1 — Floci Lambda compatibility gate
+
+Verified locally on Windows Docker Desktop 4.90.0 / Linux-amd64 Docker Engine 29.7.2.
+Only compatibility fixtures were added. No `src/`, normal Compose/Dockerfile, API contract,
+production ProcessingService, worker fallback, or GitHub Actions implementation was changed.
+
+### Reproduction and scope
+```sh
+uv sync --locked
+docker compose -p eddp-lambda-probe -f compose.lambda.yaml config --quiet
+docker compose -p eddp-lambda-probe -f compose.lambda.yaml run --build --rm lambda-tests
+docker compose -p eddp-lambda-probe -f compose.lambda.yaml stop lambda-floci
+```
+
+The overlay creates its own Floci 2.4.0 instance, network, tmpfs state and test runner. It
+publishes no ports and does not mount the development volume. Only the probe emulator gets
+the Docker socket; inspection confirmed no socket on the normal API or development Floci.
+S3 authentication remained enabled. SDK calls use explicit dummy test/test credentials.
+The official Python 3.14 Lambda image is pinned to:
+`sha256:cf4c3a72d1cd34b7ae289fef868bac0777afeef9895c5d0a3d83d7dcb4da9a29`.
+Docker create events confirmed five runtime containers used this actual image digest.
+
+### Executed compatibility evidence
+All five gates passed on three runs. The final run, with five-second function and queue
+visibility timeouts and maxReceiveCount=3, completed in **75.33 seconds**:
+- `test_python314_cold_and_warm_invocation`: actual Python **3.14**, vendored boto3 **1.43.125**,
+  invocation counters **1 then 2**, identical process boot ID across sequential calls.
+- `test_post_events_select_exact_versions_readable_from_lambda`: two authenticated presigned
+  POSTs to one key created distinct version IDs. ObjectCreated:Post messages supplied matching
+  bucket, URL-encoded key, size, sequencer and version ID. Lambda read both exact versions after
+  overwrite and wrote matching version IDs, lengths and independently checked digests to its
+  disposable DynamoDB table. Anonymous read/write and altered signatures were rejected (403).
+- `test_sqs_mapping_partial_failure_retries_only_failed_message`: one actual mixed batch of
+  two records; the successful record was delivered **once**, the retry-once record **twice**,
+  with ApproximateReceiveCount **2**. The mapping used ReportBatchItemFailures.
+- `test_failed_messages_retry_and_reach_dlq[always_fail]`: exactly **three** partial-failure
+  deliveries; original message body and ID reached the configured DLQ.
+- `test_failed_messages_retry_and_reach_dlq[raise]`: exactly **three** thrown-error deliveries;
+  original message body and ID reached the configured DLQ.
+
+S3 notification metadata/read capability and SQS dispatch were tested separately, not installed
+as a complete document business workflow. SQS fixtures warm functions before mapping activation;
+cold SQS startup visibility behavior is not established by these probes.
+
+### Verification outcomes
+- `uv sync`: passed; only dev SDK typing support and marker configuration were extended.
+- `uv run pytest`: **112 passed, 23 skipped**. Skips: 18 existing opt-in Floci cases and five
+  separately executed Lambda gates. Six new safety/ZIP-packaging unit cases passed.
+- `docker compose --profile test run --build --rm tests`: **129 passed, 5 skipped, 1 xfailed**.
+  Five skips are the separate Lambda gates; the existing strict SSE-S3 expected failure remains.
+- Isolated real Lambda/SQS suite: **5 passed**, no skips or xfails, on each of three runs.
+- `uv run ruff check .`: passed.
+- `uv run ruff format --check .`: **failed on 17 pre-existing files**. No unrelated formatting
+  was changed. The six new Python files passed a targeted Ruff format check.
+- Normal, standalone Lambda, and combined Compose configurations: passed validation.
+- `git diff --check`: passed; only Windows line-ending conversion warnings were emitted.
+- Resource inspection after the repeated run found no remaining fixture-namespaced functions,
+  queues, tables, buckets or roles. Floci's own Lambda staging bucket/log groups were not deleted.
+- The probe emulator was stopped after verification to release active socket access. The normal
+  development API/Floci remained running; no Docker volume deletion/prune commands were used.
+- A Windows import-hook packaging defect discovered by the new unit test was fixed: synthetic
+  `six.__path__` must not cause the entire host site-packages directory to be archived. The final
+  deterministic ZIP contains only the synthetic handler and selected locked SDK packages.
+
+### Limits and Phase 2 recommendation
+The local compatibility gate passes: Lambda is eligible for the next processing-design phase;
+there is no evidence requiring an automatic switch to a Docker worker. This is not production
+readiness or proof of general reliability under load/crashes/restarts.
+
+No GitHub-hosted Ubuntu runner, ARM64/rootless/remote Docker daemon, real AWS deployment,
+execution-role credential delivery, least-privilege IAM enforcement, or encryption at rest was
+verified. The function deliberately uses custom PROBE_* dummy credentials, not an execution
+role's credentials. Five-second probe visibility meets the function-timeout minimum but is not
+the larger AWS-recommended production retry margin. Follow-up work still needs conditional
+processing leases, immutable-version job policy, genuine content validation, and a thin handler
+around shared application logic. No such business logic or CI/CD workflows were implemented.
+
+See `infra/compatibility/README.md` for exact commands, module responsibilities and security scope.
+
 ## Milestone 3 — secure local S3 uploads
 
 Implemented while preserving all Milestone 2 endpoints and the save/get repository contract:

@@ -1,0 +1,6 @@
+# Pulled and verified using Docker Desktop Linux/amd64. No moving runtime tag in this probe.
+floci:
+  services:
+    lambda:
+      runtime-images:
+        python3.14: public.ecr.aws/lambda/python:3.14@sha256:cf4c3a72d1cd34b7ae289fef868bac0777afeef9895c5d0a3d83d7dcb4da9a29

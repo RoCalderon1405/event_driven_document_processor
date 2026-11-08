@@ -1,0 +1,50 @@
+# Standalone compatibility overlay: does NOT reconfigure the development Floci/API.
+# docker compose -p eddp-lambda-probe -f compose.lambda.yaml run --build --rm lambda-tests
+services:
+  lambda-floci:
+    image: floci/floci:2.4.0
+    environment:
+      FLOCI_STORAGE_MODE: memory
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+      FLOCI_HOSTNAME: lambda-floci
+      FLOCI_BASE_URL: http://lambda-floci:4566
+      FLOCI_SERVICES_UI_ENABLED: "false"
+      FLOCI_SERVICES_S3_ENFORCE_AUTH: "true"
+      FLOCI_SERVICES_LAMBDA_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-eddp-lambda-probe}_lambda_probe
+      FLOCI_SERVICES_LAMBDA_DOCKER_HOST_OVERRIDE: lambda-floci
+      FLOCI_DOCKER_RESOURCE_NAMESPACE: ${COMPOSE_PROJECT_NAME:-eddp-lambda-probe}
+      FLOCI_SERVICES_LAMBDA_CONTAINER_NAME_PREFIX: lambda-probe
+      FLOCI_SERVICES_LAMBDA_REACTIVE_S3_SYNC_ENABLED: "false"
+      FLOCI_SERVICES_LAMBDA_INIT_TIMEOUT_SECONDS: "60"
+      FLOCI_SERVICES_LAMBDA_WARM_POOL_MAX_PER_FUNCTION: "1"
+      FLOCI_SERVICES_LAMBDA_WARM_POOL_MAX_TOTAL: "2"
+      QUARKUS_CONFIG_LOCATIONS: file:/etc/floci/probe-runtime.yaml
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - ./infra/compatibility/probe-runtime.yaml:/etc/floci/probe-runtime.yaml:ro
+    tmpfs:
+      - /app/data
+    networks:
+      - lambda-probe
+
+  lambda-tests:
+    build:
+      context: .
+      target: test
+    command: ["uv", "run", "--no-sync", "pytest", "-v", "-s", "-ra", "tests/compatibility"]
+    environment:
+      RUN_LAMBDA_COMPATIBILITY: "1"
+      LAMBDA_PROBE_ENDPOINT: http://lambda-floci:4566
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    depends_on:
+      lambda-floci:
+        condition: service_healthy
+    networks:
+      - lambda-probe
+
+networks:
+  lambda-probe:
+    name: ${COMPOSE_PROJECT_NAME:-eddp-lambda-probe}_lambda_probe
