@@ -1,5 +1,18 @@
 # Project status
 
+## README presentation refresh
+
+- Reorganized README into a concise portfolio landing page with nine requested sections, a hero,
+  static stack/status badges, event-flow diagram, quick start and links to deeper documentation.
+- Preserved detailed configuration, API examples, storage/processing invariants and local safety
+  guidance in `docs/DEVELOPMENT.md`; adjusted relative links for its new location.
+- Passed: reusable quality runner (locked sync, offline pytest, Ruff lint/full formatting), Compose
+  configuration validation, local documentation-link/section checks and final whitespace check.
+- Not rerun for this documentation-only change: Docker integration/event suites and persistence
+  restart verification. Existing results below remain historical evidence, not new executions.
+- No hosted CI/AWS validation or rendered GitHub/browser preview was performed. No code, runtime
+  configuration, credentials, commits or pushes were changed by this refresh.
+
 ## Milestone 4 Phase 4 — secure GitHub Actions CI
 
 Implemented as uncommitted working-tree changes, preserving the prior Phase 3 work. No commit,
