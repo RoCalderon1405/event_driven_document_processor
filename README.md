@@ -21,7 +21,7 @@ Create document jobs, upload files directly to private S3 storage, and validate 
 content asynchronously through **S3 → SQS → Lambda → DynamoDB**.
 
 **Implemented and tested locally with Floci.** The event pipeline is opt-in; the default stack
-provides the API and uploads only. No real AWS deployment or successful hosted CI run is claimed.
+provides the API and uploads only. No AWS deployment or successful hosted CI/release run is claimed.
 
 ## Why this project matters
 
@@ -80,6 +80,7 @@ See the [design decisions](docs/decisions/) for concurrency and security tradeof
 - **Resilient event delivery:** nested-record handling, partial batch failures, retries and a DLQ.
 - **Persistent local jobs:** DynamoDB adapter, repeatable bootstrap and backward-compatible API contracts.
 - **Isolated CI gates:** locked dependencies, lint/format checks, Docker builds and real event tests.
+- **Tag-driven delivery:** reuse CI before publishing the production API image to GHCR.
 
 > **Development only:** the API has no authentication, ownership checks, quotas or rate limits.
 > Keep it local. Format validation is not malware scanning; production security remains future work.
@@ -115,7 +116,7 @@ uv run python infra/ci/run.py quality  # Offline pytest, Ruff lint and full form
 uv run python infra/ci/run.py docker   # Isolated builds, Floci, compatibility and event tests
 ```
 
-**Recorded local evidence:** 289 isolated regression passes, 5 Lambda compatibility passes and
+**Recorded local evidence:** 327 isolated regression passes, 5 Lambda compatibility passes and
 9 real event-chain passes. One strict SSE-metadata xfail records a Floci limitation; it is not proof
 of encryption at rest. Offline runs intentionally skip emulator-dependent tests.
 
@@ -128,13 +129,14 @@ logs; [project status](docs/PROJECT_STATUS.md) distinguishes local results from 
 - [Development guide](docs/DEVELOPMENT.md) — setup, configuration, API examples and processing details.
 - [Event stack](infra/events/README.md) — real S3/SQS/Lambda setup and verification.
 - [CI guide](infra/ci/README.md) — isolated gates, trust boundaries and GitHub settings.
+- [Release guide](infra/release/README.md) — version tags, GHCR digests and publication safeguards.
 - [Architecture decisions](docs/decisions/) — storage, uploads, processing, events and CI.
 - [Project status](docs/PROJECT_STATUS.md) · [Changelog](CHANGELOG.md) — evidence and milestone history.
 
 ## Future improvements
 
 - Authentication, ownership checks, quotas and rate limiting before public exposure.
-- Hosted CI verification and real AWS IAM, encryption, load and failure testing.
+- Hosted CI/release verification and real AWS IAM, encryption, load and failure testing.
 - Cross-document SHA-256 deduplication — separate from implemented event idempotency.
 - Reliable webhooks, expanded observability and operator-assisted DLQ recovery tooling.
 

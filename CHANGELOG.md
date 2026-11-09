@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — GHCR continuous delivery
+
+- Added canonical SemVer tag releases that reuse the complete existing CI workflow before publishing.
+- Build and inspect the non-root Linux/amd64 `runtime` target, never the Dockerfile's final test/
+  bootstrap target. Publish version/full-commit tags with verified matching GHCR digests in the summary.
+- Limit package writes to a separate publishing job using GITHUB_TOKEN; prevent workflow overwrites
+  through duplicate checks, remote-tag provenance checks and repository-wide release serialization.
+- Document tag/package access rules, partial-release behavior, local checks and the distinction between
+  configured delivery and an actual hosted release. No AWS deployment or automatic Git operations.
+
 ## Unreleased — Milestone 4 Phase 4
 
 - Added SHA-pinned, read-only GitHub Actions CI for pull requests and master pushes, using Python

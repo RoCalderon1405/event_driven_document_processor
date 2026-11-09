@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# One publisher for the whole image, not just one per version. Never cancel an active push.
+concurrency:
+  group: ghcr-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Validate release ref
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - run: python -m infra.release.publish check
+
+  verify:
+    name: Verify tagged commit
+    needs: check
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish runtime image
+    needs: [check, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      # No registry token is passed to Docker build or to the reusable CI jobs.
+      - name: Build and inspect production target
+        run: python -m infra.release.publish build
+        timeout-minutes: 12
+      - name: Refuse duplicates, publish and verify digests
+        id: image
+        run: python -m infra.release.publish publish
+        timeout-minutes: 7
+        env:
+          RELEASE_TOKEN: ${{ github.token }}

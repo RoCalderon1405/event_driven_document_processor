@@ -111,3 +111,9 @@ the commit pins with floating tags. Actionlint validation is not a hosted workfl
 
 Nothing is committed/pushed automatically. The new workflow cannot run on GitHub until the user
 publishes it. Current local versus hosted evidence is recorded in `docs/PROJECT_STATUS.md`.
+
+## Reuse for delivery
+
+CI also exposes `workflow_call` for the [release workflow](../release/README.md). A tag release runs
+these same gates at the tagged commit with read-only permissions and no registry token. Only its
+separate, dependent publishing job can write packages; ordinary CI jobs never publish images.

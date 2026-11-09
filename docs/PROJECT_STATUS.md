@@ -1,5 +1,69 @@
 # Project status
 
+## GHCR continuous delivery — implemented, hosted publication unverified
+
+### Scope and files
+- `.github/workflows/ci.yml` now exposes `workflow_call` without changing the existing PR/master/
+  manual gates or permissions. `.github/workflows/release.yml` validates pushed `v*` tags, invokes
+  that CI at the same tagged revision, then enables a separate dependent publishing job.
+- `infra/release/publish.py` validates canonical SemVer/clean checkout/exact commit/master ancestry,
+  builds and inspects the explicit Linux/amd64 `runtime` target, rechecks remote Git tag identity,
+  refuses existing version/full-SHA image tags, publishes with temporary GITHUB_TOKEN login config,
+  verifies matching remote digests and records them in the workflow summary. No floating aliases.
+- Only the publishing job requests `packages: write` plus `contents: read`. CI/emulator jobs receive
+  no package-write token. Credentials never enter Docker build or child environments; no new action
+  dependency was added. Existing upstream Actions remain SHA-pinned.
+- `tests/unit/test_release.py`: 38 offline cases for version/provenance, production target selection,
+  duplicate guards, fail-closed registry behavior, partial publication, digest verification and logs.
+- `infra/release/README.md`, ADR 0006, README, CI guide and CHANGELOG document user-operated releases,
+  package/tag settings, least privilege, non-atomic failure recovery and the GHCR immutability boundary.
+- No application contracts, dependencies/lockfile, Docker targets or AWS infrastructure changed.
+  No commit, tag creation, push, login to GHCR or remote publication was performed by the agent.
+
+### Actual checks
+- The production target built locally through the actual release build helper and passed non-root/
+  Uvicorn/application-import/no-pytest/no-Ruff checks in a network-disabled disposable container.
+  Its local `v0.0.0-local` OCI label is smoke-test metadata, not a published release or registry digest.
+  An additional local smoke check started its real Uvicorn process and received HTTP 200 from
+  `/health` inside a network-disabled container, then stopped it cleanly.
+- `uv sync --locked` and reusable quality runner passed; final direct offline suite: **285 passed,
+  57 intentional opt-in skips**, including all **38 release tests**. Ruff lint/full formatting passed.
+- Actionlint 1.7.12 validated both workflows, including the reusable CI dependency. The checkout and
+  setup-python pins were re-resolved upstream. Normal Compose validation and `git diff --check` passed.
+- Initial Docker CI attempt failed collection because the first build snapshot captured a literal
+  NUL in a new invalid-input test fixture. The fixture was corrected to a source escape, 37/37 release
+  tests passed, and the complete isolated Docker gate was restarted. That first failed run cleaned
+  up both exact projects and is not reported as a passing integration run.
+- Normal development Docker suite passed: **326 passed, 14 separately executed-suite skips,
+  1 unchanged strict SSE xfailed**. The restart verifier passed, retaining its job across API restart
+  and Floci container recreation.
+- The complete reusable isolated CI rerun then passed: **326 regression passes / zero skips /
+  1 known SSE xfail**, **5 compatibility passes / zero skips**, **9 real event passes / zero skips**.
+  Both exact-project cleanup steps passed. One final provenance test was subsequently added to cover
+  event SHAs that are annotated tag objects as well as already-peeled commit SHAs; all 38 release
+  cases passed offline. The final isolated regression rerun passed **327 / zero skips /
+  1 known SSE xfail**, including that additional case, and scoped cleanup passed.
+- Final inspection found no CI containers, networks or cleanup state left behind. No volumes were
+  deleted; Floci's previously documented namespaced code-artifact volumes are deliberately retained.
+  Normal development API/Floci remain healthy. The Git index remains untouched.
+
+### Required manual controls and remaining limits
+**No hosted release verified.** Publishing requires the user to merge/publish these changes and push
+an unused canonical SemVer tag. Local mocks/builds do not prove GITHUB_TOKEN registry authentication,
+package-write authorization, tag/digest publication or GitHub-hosted workflow execution.
+
+Protect `v*` against updates/deletions and restrict creation/bypass to trusted maintainers; protect
+master with CI/review. Permit the job's package-write permission and link any existing package to
+this repository with Actions write access. Set package visibility deliberately. No PAT/AWS secrets.
+
+GHCR has no create-only multi-tag transaction in this implementation. The workflow serializes its
+publishers and refuses duplicates, but independent package writers can race/overwrite mutable tags;
+restrict them administratively. Only the digest is intrinsically content-addressed. A partial push
+requires inspection, not automatic overwrite/rollback. One release per commit; no moving latest tag.
+GitHub can supersede pending concurrent runs: push release tags one at a time. See the release guide.
+The "production image" is the existing runtime packaging target, not a claim of production security
+readiness or an AWS deployment. First real publication and consumption remain user-operated checks.
+
 ## README presentation refresh
 
 - Reorganized README into a concise portfolio landing page with nine requested sections, a hero,
