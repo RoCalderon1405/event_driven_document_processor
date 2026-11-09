@@ -17,5 +17,9 @@ class UploadAuthorizer(Protocol):
     """Authorize a single exact object upload without transferring file bytes."""
 
     def authorize(
-        self, job_id: UUID, *, content_type: str, file_size_bytes: int,
+        self,
+        job_id: UUID,
+        *,
+        content_type: str,
+        file_size_bytes: int,
     ) -> UploadAuthorization: ...

@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — Milestone 4 Phase 4
+
+- Added SHA-pinned, read-only GitHub Actions CI for pull requests and master pushes, using Python
+  3.14, uv 0.13.6, locked dependencies and complete pytest/Ruff lint/format gates.
+- Added reusable isolated Docker gates with ephemeral Floci state, no published ports/development
+  mounts, explicit native Lambda compatibility/event suites, exact-project cleanup and sanitized logs.
+- Added CI isolation/result-enforcement tests, reproduction/security documentation and ADR 0005.
+  The existing strict SSE xfail is preserved; unexpected skips/new expected failures fail Docker CI.
+- Resolved the 11-file Ruff baseline as a separate AST-equivalent formatting patch with LF checkout
+  policy. No commits, pushes, CD, Coveralls, React or production credentials were introduced.
+
+## Unreleased — Milestone 4 Phase 3
+
+- Added strict S3 notification decoding and a thin SQS Lambda adapter delegating to the existing
+  ProcessingService. Outer-message partial failure reporting preserves active-claim retries and
+  safe replay of successful nested records without duplicating business logic.
+- Added opt-in idempotent queue/DLQ/role/Lambda/mapping provisioning, quarantine/ create notifications,
+  source-scoped policies and notification/policy merging that retains unrelated entries.
+- Added locked native Linux Python 3.14 Lambda artifact packaging in the pinned official runtime,
+  private versioned artifact deployment, validated timeout/lease/visibility budgets and narrow IAM
+  examples. Normal API contracts, processing transitions and old test buckets remain unchanged.
+- Extended the explicit Lambda overlay with separate persistent storage, loopback gateway/API,
+  event-test runner and host-facing verification. Socket access remains emulator-only.
+- Added event decoding/acknowledgement/packaging unit tests and isolated real event-chain tests,
+  including duplicate/order/concurrency, partial messages, native formats, crash/timeout recovery,
+  poison/DLQ delivery and repeated bootstrap. Actual outcomes are recorded in PROJECT_STATUS.md.
+- Added ADR 0004 and event-stack instructions. No CI/GHCR, webhook, AI or document deduplication added.
+
 ## Unreleased — Milestone 4 Phase 2
 
 - Added shared ProcessingService and narrow processing-store, versioned-reader and validator ports;

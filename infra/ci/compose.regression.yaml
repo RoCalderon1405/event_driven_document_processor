@@ -1,0 +1,9 @@
+services:
+  floci:
+    ports: !reset []
+    volumes: !reset []
+    tmpfs: [/app/data]
+    environment:
+      FLOCI_STORAGE_MODE: memory
+  api:
+    ports: !reset []

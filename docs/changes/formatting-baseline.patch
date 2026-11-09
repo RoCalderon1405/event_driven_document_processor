@@ -1,0 +1,587 @@
+diff --git a/infra/local/verify_upload.py b/infra/local/verify_upload.py
+index 244865d..3ba49da 100644
+--- a/infra/local/verify_upload.py
++++ b/infra/local/verify_upload.py
+@@ -23,17 +23,25 @@ def main() -> None:
+     """Upload to the untouched API-issued localhost URL, then verify bytes and job state."""
+     compose("up", "-d", "--build", "--wait", "api")
+     with httpx.Client(timeout=20, trust_env=False) as http:
+-        legacy = http.post(f"{BASE_URL}/api/v1/documents", json={
+-            "filename": "legacy-check.pdf", "content_type": "application/pdf",
+-        })
++        legacy = http.post(
++            f"{BASE_URL}/api/v1/documents",
++            json={
++                "filename": "legacy-check.pdf",
++                "content_type": "application/pdf",
++            },
++        )
+         if legacy.status_code != 201:
+             raise RuntimeError("Metadata-only job creation failed")
+         legacy_job = legacy.json()
+         data = b"%PDF-1.7\nlocal smoke bytes; not a validated PDF\n"
+-        issued = http.post(f"{BASE_URL}/api/v1/documents/uploads", json={
+-            "filename": "smoke.pdf",
+-            "content_type": "application/pdf", "file_size_bytes": len(data),
+-        })
++        issued = http.post(
++            f"{BASE_URL}/api/v1/documents/uploads",
++            json={
++                "filename": "smoke.pdf",
++                "content_type": "application/pdf",
++                "file_size_bytes": len(data),
++            },
++        )
+         if issued.status_code != 201 or issued.headers.get("Cache-Control") != "no-store":
+             raise RuntimeError("Upload issuance failed")
+         result = issued.json()
+@@ -42,7 +50,8 @@ def main() -> None:
+         if location.scheme != "http" or location.netloc != "localhost:4566":
+             raise RuntimeError("API did not issue the expected host-facing local S3 URL")
+         response = http.post(
+-            upload["url"], data=upload["fields"],
++            upload["url"],
++            data=upload["fields"],
+             files={"file": ("smoke.pdf", data, "application/pdf")},
+         )
+         if response.status_code != 204:
+@@ -58,12 +67,17 @@ def main() -> None:
+                 raise RuntimeError("Job changed after Floci recreation")
+         # Separate privileged test inspector; the application signer needs no read permission.
+         s3 = boto3.client(
+-            "s3", endpoint_url="http://localhost:4566",
++            "s3",
++            endpoint_url="http://localhost:4566",
+             region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
+-            aws_access_key_id="test", aws_secret_access_key="test",
++            aws_access_key_id="test",
++            aws_secret_access_key="test",
+             config=Config(
+-                signature_version="s3v4", s3={"addressing_style": "path"},
+-                connect_timeout=2, read_timeout=3, retries={"total_max_attempts": 3},
++                signature_version="s3v4",
++                s3={"addressing_style": "path"},
++                connect_timeout=2,
++                read_timeout=3,
++                retries={"total_max_attempts": 3},
+             ),
+         )
+         try:
+diff --git a/src/event_driven_document_processor/bootstrap/aws.py b/src/event_driven_document_processor/bootstrap/aws.py
+index 018ab0e..5787969 100644
+--- a/src/event_driven_document_processor/bootstrap/aws.py
++++ b/src/event_driven_document_processor/bootstrap/aws.py
+@@ -29,8 +29,10 @@ def create_dynamodb_client(settings: Settings) -> DynamoDBClient:
+ def create_s3_client(settings: Settings, *, public: bool = False) -> S3Client:
+     """Use the actual caller's endpoint for signing; never rewrite generated URLs."""
+     endpoint = settings.s3_public_endpoint_url if public else settings.s3_internal_endpoint_url
+-    if public and endpoint is None and (
+-        settings.s3_internal_endpoint_url is not None or settings.aws_endpoint_url is not None
++    if (
++        public
++        and endpoint is None
++        and (settings.s3_internal_endpoint_url is not None or settings.aws_endpoint_url is not None)
+     ):
+         raise ValueError("A public S3 endpoint is required with local AWS endpoints")
+     return boto3.client(
+@@ -38,7 +40,8 @@ def create_s3_client(settings: Settings, *, public: bool = False) -> S3Client:
+         endpoint_url=str(endpoint) if endpoint else None,
+         region_name=settings.aws_default_region,
+         config=Config(
+-            signature_version="s3v4", s3={"addressing_style": "path"},
++            signature_version="s3v4",
++            s3={"addressing_style": "path"},
+             connect_timeout=settings.aws_connect_timeout,
+             read_timeout=settings.aws_read_timeout,
+             retries={"mode": "standard", "total_max_attempts": settings.aws_max_attempts},
+diff --git a/src/event_driven_document_processor/bootstrap/dependencies.py b/src/event_driven_document_processor/bootstrap/dependencies.py
+index 59284ce..f216302 100644
+--- a/src/event_driven_document_processor/bootstrap/dependencies.py
++++ b/src/event_driven_document_processor/bootstrap/dependencies.py
+@@ -55,7 +55,8 @@ def get_upload_authorizer() -> UploadAuthorizer:
+         client = create_s3_client(settings, public=True)
+     except (BotoCoreError, ClientError, ValueError) as error:
+         logging.getLogger(__name__).error(
+-            "S3 client initialization failed error=%s", type(error).__name__,
++            "S3 client initialization failed error=%s",
++            type(error).__name__,
+         )
+         raise UploadAuthorizationUnavailableError("Upload signing unavailable") from error
+     return S3UploadAuthorizer(client, settings.s3_bucket_name, settings.upload_expires_in_seconds)
+@@ -68,7 +69,8 @@ def get_upload_service(
+     """Inject a narrow signer and plain policy values, not Settings into application code."""
+     settings = get_settings()
+     return UploadService(
+-        repository, authorizer,
++        repository,
++        authorizer,
+         allowed_content_types=settings.upload_allowed_content_types,
+         max_file_size_bytes=settings.upload_max_file_size_bytes,
+     )
+diff --git a/src/event_driven_document_processor/bootstrap/routes.py b/src/event_driven_document_processor/bootstrap/routes.py
+index 804c1c9..47bf745 100644
+--- a/src/event_driven_document_processor/bootstrap/routes.py
++++ b/src/event_driven_document_processor/bootstrap/routes.py
+@@ -6,4 +6,4 @@ from event_driven_document_processor.modules.documents.api.router import (
+ 
+ api_router = APIRouter(prefix="/api/v1")
+ 
+-api_router.include_router(router_documents)
+\ No newline at end of file
++api_router.include_router(router_documents)
+diff --git a/src/event_driven_document_processor/main.py b/src/event_driven_document_processor/main.py
+index ebf8766..f74bbde 100644
+--- a/src/event_driven_document_processor/main.py
++++ b/src/event_driven_document_processor/main.py
+@@ -30,17 +30,21 @@ app.include_router(api_router)
+ async def upload_validation_error(request: Request, error: UploadValidationError) -> JSONResponse:
+     """Application validation messages are fixed text, never echoed SDK/request payloads."""
+     return JSONResponse(
+-        status_code=422, content={"detail": str(error)}, headers={"Cache-Control": "no-store"},
++        status_code=422,
++        content={"detail": str(error)},
++        headers={"Cache-Control": "no-store"},
+     )
+ 
+ 
+ @app.exception_handler(UploadAuthorizationUnavailableError)
+ async def upload_unavailable(
+-    request: Request, error: UploadAuthorizationUnavailableError,
++    request: Request,
++    error: UploadAuthorizationUnavailableError,
+ ) -> JSONResponse:
+     """Hide all credentials, endpoints, and signing material on authorization failures."""
+     return JSONResponse(
+-        status_code=503, content={"detail": "Upload authorization temporarily unavailable"},
++        status_code=503,
++        content={"detail": "Upload authorization temporarily unavailable"},
+         headers={"Cache-Control": "no-store"},
+     )
+ 
+diff --git a/src/event_driven_document_processor/modules/documents/api/router.py b/src/event_driven_document_processor/modules/documents/api/router.py
+index a66740f..e341ad6 100644
+--- a/src/event_driven_document_processor/modules/documents/api/router.py
++++ b/src/event_driven_document_processor/modules/documents/api/router.py
+@@ -30,14 +30,17 @@ def create_upload(
+ ) -> CreateUploadResponse:
+     """Create a pending job and short-lived authorization for a private quarantine object."""
+     result = service.create_upload_job(
+-        filename=document.filename, content_type=document.content_type,
+-        description=document.description, file_size_bytes=document.file_size_bytes,
++        filename=document.filename,
++        content_type=document.content_type,
++        description=document.description,
++        file_size_bytes=document.file_size_bytes,
+     )
+     response.headers["Cache-Control"] = "no-store"
+     return CreateUploadResponse(
+         job=DocumentJobResponse.model_validate(result.job),
+         upload=UploadAuthorizationResponse(
+-            url=result.upload.url, fields=result.upload.fields,
++            url=result.upload.url,
++            fields=result.upload.fields,
+             expires_in_seconds=result.upload.expires_in_seconds,
+         ),
+     )
+diff --git a/src/event_driven_document_processor/modules/documents/application/ports.py b/src/event_driven_document_processor/modules/documents/application/ports.py
+index a72339b..10b35f8 100644
+--- a/src/event_driven_document_processor/modules/documents/application/ports.py
++++ b/src/event_driven_document_processor/modules/documents/application/ports.py
+@@ -17,5 +17,9 @@ class UploadAuthorizer(Protocol):
+     """Authorize a single exact object upload without transferring file bytes."""
+ 
+     def authorize(
+-        self, job_id: UUID, *, content_type: str, file_size_bytes: int,
++        self,
++        job_id: UUID,
++        *,
++        content_type: str,
++        file_size_bytes: int,
+     ) -> UploadAuthorization: ...
+diff --git a/src/event_driven_document_processor/modules/documents/infrastructure/s3_upload_authorizer.py b/src/event_driven_document_processor/modules/documents/infrastructure/s3_upload_authorizer.py
+index 45c7ae6..3e934ee 100644
+--- a/src/event_driven_document_processor/modules/documents/infrastructure/s3_upload_authorizer.py
++++ b/src/event_driven_document_processor/modules/documents/infrastructure/s3_upload_authorizer.py
+@@ -30,7 +30,11 @@ class S3UploadAuthorizer(UploadAuthorizer):
+         self._expires_in_seconds = expires_in_seconds
+ 
+     def authorize(
+-        self, job_id: UUID, *, content_type: str, file_size_bytes: int,
++        self,
++        job_id: UUID,
++        *,
++        content_type: str,
++        file_size_bytes: int,
+     ) -> UploadAuthorization:
+         key = f"quarantine/{job_id}/{uuid4().hex}"
+         try:
+@@ -46,10 +50,14 @@ class S3UploadAuthorizer(UploadAuthorizer):
+             )
+         except (BotoCoreError, ClientError, ValueError) as error:
+             logger.error(
+-                "S3 operation=PresignPost job_id=%s error=%s", job_id, type(error).__name__,
++                "S3 operation=PresignPost job_id=%s error=%s",
++                job_id,
++                type(error).__name__,
+             )
+             raise UploadAuthorizationUnavailableError("Upload signing unavailable") from error
+         return UploadAuthorization(
+             object_reference=S3ObjectReference(bucket=self._bucket, key=key),
+-            url=post["url"], fields=post["fields"], expires_in_seconds=self._expires_in_seconds,
++            url=post["url"],
++            fields=post["fields"],
++            expires_in_seconds=self._expires_in_seconds,
+         )
+diff --git a/tests/unit/test_dynamodb_repository.py b/tests/unit/test_dynamodb_repository.py
+index ec70780..108fbe2 100644
+--- a/tests/unit/test_dynamodb_repository.py
++++ b/tests/unit/test_dynamodb_repository.py
+@@ -182,9 +182,12 @@ def test_optional_object_reference_roundtrip(aws_client: DynamoDBClient, job: Do
+     reference = S3ObjectReference("test-uploads", f"quarantine/{job.job_id}/opaque")
+     job = replace(job, object_reference=reference)
+     item = item_for(job)
+-    item["object_reference"] = {"M": {
+-        "bucket": {"S": reference.bucket}, "key": {"S": reference.key},
+-    }}
++    item["object_reference"] = {
++        "M": {
++            "bucket": {"S": reference.bucket},
++            "key": {"S": reference.key},
++        }
++    }
+     with Stubber(aws_client) as stub:
+         stub.add_response("put_item", {}, {"TableName": "jobs", "Item": item})
+         stub.add_response("get_item", {"Item": item})
+@@ -193,11 +196,23 @@ def test_optional_object_reference_roundtrip(aws_client: DynamoDBClient, job: Do
+         assert repository.get(job.job_id) == job
+ 
+ 
+-@pytest.mark.parametrize("reference", [{"NULL": True}, {"M": {}}, {"M": {
+-    "bucket": {"S": ""}, "key": {"S": "quarantine/opaque"},
+-}}])
++@pytest.mark.parametrize(
++    "reference",
++    [
++        {"NULL": True},
++        {"M": {}},
++        {
++            "M": {
++                "bucket": {"S": ""},
++                "key": {"S": "quarantine/opaque"},
++            }
++        },
++    ],
++)
+ def test_corrupt_object_reference_is_explicit(
+-    aws_client: DynamoDBClient, job: DocumentJob, reference: dict,
++    aws_client: DynamoDBClient,
++    job: DocumentJob,
++    reference: dict,
+ ) -> None:
+     item = item_for(job)
+     item["object_reference"] = reference
+diff --git a/tests/unit/test_s3_authorizer.py b/tests/unit/test_s3_authorizer.py
+index bbf37ae..26023a2 100644
+--- a/tests/unit/test_s3_authorizer.py
++++ b/tests/unit/test_s3_authorizer.py
+@@ -49,7 +49,9 @@ def test_exact_policy_and_unique_server_keys(s3_client: S3Client) -> None:
+ 
+ 
+ def test_signing_failure_does_not_log_material(
+-    s3_client: S3Client, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
++    s3_client: S3Client,
++    monkeypatch: pytest.MonkeyPatch,
++    caplog: pytest.LogCaptureFixture,
+ ) -> None:
+     def fail(**kwargs) -> None:
+         raise NoCredentialsError()
+@@ -57,7 +59,9 @@ def test_signing_failure_does_not_log_material(
+     monkeypatch.setattr(s3_client, "generate_presigned_post", fail)
+     with pytest.raises(UploadAuthorizationUnavailableError):
+         S3UploadAuthorizer(s3_client, "test-uploads", 300).authorize(
+-            uuid4(), content_type="application/pdf", file_size_bytes=123,
++            uuid4(),
++            content_type="application/pdf",
++            file_size_bytes=123,
+         )
+     assert "NoCredentialsError" in caplog.text
+     assert "policy" not in caplog.text.lower()
+@@ -72,9 +76,17 @@ def test_local_signer_requires_explicit_public_endpoint() -> None:
+         )
+ 
+ 
+-@pytest.mark.parametrize("origins", [("*",), ("https://*.example.com",),
+-                                      ("http://localhost:3000/path",), ("http://user:pass@host",),
+-                                      ("http://localhost:3000?",), ("http://localhost:3000#",)])
++@pytest.mark.parametrize(
++    "origins",
++    [
++        ("*",),
++        ("https://*.example.com",),
++        ("http://localhost:3000/path",),
++        ("http://user:pass@host",),
++        ("http://localhost:3000?",),
++        ("http://localhost:3000#",),
++    ],
++)
+ def test_cors_rejects_wildcard_or_non_origin(origins: tuple[str, ...]) -> None:
+     with pytest.raises(ValueError):
+         Settings(s3_cors_allowed_origins=origins)
+@@ -85,11 +97,16 @@ def test_cors_defaults_closed() -> None:
+     assert Settings(s3_cors_allowed_origins=("http://localhost:3000",)).s3_cors_allowed_origins
+ 
+ 
+-@pytest.mark.parametrize("field,value", [
+-    ("upload_expires_in_seconds", 0), ("upload_expires_in_seconds", 901),
+-    ("upload_max_file_size_bytes", 0), ("upload_allowed_content_types", ()),
+-    ("upload_allowed_content_types", ("application/exe",)),
+-])
++@pytest.mark.parametrize(
++    "field,value",
++    [
++        ("upload_expires_in_seconds", 0),
++        ("upload_expires_in_seconds", 901),
++        ("upload_max_file_size_bytes", 0),
++        ("upload_allowed_content_types", ()),
++        ("upload_allowed_content_types", ("application/exe",)),
++    ],
++)
+ def test_invalid_upload_configuration(field: str, value: object) -> None:
+     with pytest.raises(ValueError):
+         Settings(**{field: value})
+diff --git a/tests/unit/test_uploads.py b/tests/unit/test_uploads.py
+index 4bd5eb3..7599b13 100644
+--- a/tests/unit/test_uploads.py
++++ b/tests/unit/test_uploads.py
+@@ -38,12 +38,17 @@ class FakeAuthorizer(UploadAuthorizer):
+     """A deterministic signer for isolated application/HTTP tests."""
+ 
+     def authorize(
+-        self, job_id: UUID, *, content_type: str, file_size_bytes: int,
++        self,
++        job_id: UUID,
++        *,
++        content_type: str,
++        file_size_bytes: int,
+     ) -> UploadAuthorization:
+         return UploadAuthorization(
+             S3ObjectReference("test-uploads", f"quarantine/{job_id}/opaque"),
+             "http://localhost:4566/test-uploads",
+-            {"key": f"quarantine/{job_id}/opaque", "policy": "SECRET_POLICY"}, 300,
++            {"key": f"quarantine/{job_id}/opaque", "policy": "SECRET_POLICY"},
++            300,
+         )
+ 
+ 
+@@ -55,7 +60,8 @@ def fake_signer() -> Iterator[None]:
+ 
+ 
+ def make_service(
+-    repository: JobRepository | None = None, authorizer: UploadAuthorizer | None = None,
++    repository: JobRepository | None = None,
++    authorizer: UploadAuthorizer | None = None,
+ ) -> UploadService:
+     return UploadService(
+         repository if repository is not None else InMemoryJobRepository(),
+@@ -68,7 +74,9 @@ def make_service(
+ def test_only_reference_is_persisted() -> None:
+     repository = InMemoryJobRepository()
+     result = make_service(repository).create_upload_job(
+-        filename="a.pdf", content_type="application/pdf", file_size_bytes=123,
++        filename="a.pdf",
++        content_type="application/pdf",
++        file_size_bytes=123,
+     )
+     assert repository.get(result.job.job_id) == result.job
+     assert result.job.object_reference == result.upload.object_reference
+@@ -77,13 +85,23 @@ def test_only_reference_is_persisted() -> None:
+     assert "SECRET_POLICY" not in repr(result)
+ 
+ 
+-@pytest.mark.parametrize("change", [
+-    {"filename": "../a.pdf"}, {"filename": "C:\\a.pdf"}, {"filename": " "},
+-    {"filename": "bad\x00.pdf"}, {"content_type": "application/exe"},
+-    {"file_size_bytes": 0}, {"file_size_bytes": -1}, {"file_size_bytes": True},
+-    {"file_size_bytes": "123"}, {"file_size_bytes": 1.0},
+-    {"file_size_bytes": 10485761}, {"description": "x" * 501},
+-])
++@pytest.mark.parametrize(
++    "change",
++    [
++        {"filename": "../a.pdf"},
++        {"filename": "C:\\a.pdf"},
++        {"filename": " "},
++        {"filename": "bad\x00.pdf"},
++        {"content_type": "application/exe"},
++        {"file_size_bytes": 0},
++        {"file_size_bytes": -1},
++        {"file_size_bytes": True},
++        {"file_size_bytes": "123"},
++        {"file_size_bytes": 1.0},
++        {"file_size_bytes": 10485761},
++        {"description": "x" * 501},
++    ],
++)
+ def test_validation_precedes_signing(change: dict) -> None:
+     signer = Mock(spec=UploadAuthorizer)
+     repository = Mock()
+@@ -100,7 +118,9 @@ def test_persistence_failure_never_returns_authorization() -> None:
+     repository.save.side_effect = PersistenceUnavailableError("internal")
+     with pytest.raises(PersistenceUnavailableError):
+         make_service(repository).create_upload_job(
+-            filename="a.pdf", content_type="application/pdf", file_size_bytes=123,
++            filename="a.pdf",
++            content_type="application/pdf",
++            file_size_bytes=123,
+         )
+ 
+ 
+@@ -110,7 +130,9 @@ def test_signing_failure_does_not_save_a_job() -> None:
+     signer.authorize.side_effect = UploadAuthorizationUnavailableError("internal")
+     with pytest.raises(UploadAuthorizationUnavailableError):
+         make_service(repository, signer).create_upload_job(
+-            filename="a.pdf", content_type="application/pdf", file_size_bytes=123,
++            filename="a.pdf",
++            content_type="application/pdf",
++            file_size_bytes=123,
+         )
+     repository.save.assert_not_called()
+ 
+@@ -118,54 +140,80 @@ def test_signing_failure_does_not_save_a_job() -> None:
+ def test_configured_mime_and_size_limits_are_applied() -> None:
+     signer = Mock(spec=UploadAuthorizer)
+     service = UploadService(
+-        InMemoryJobRepository(), signer,
+-        allowed_content_types=("image/png",), max_file_size_bytes=10,
++        InMemoryJobRepository(),
++        signer,
++        allowed_content_types=("image/png",),
++        max_file_size_bytes=10,
+     )
+     for content_type, size in (("application/pdf", 1), ("image/png", 11)):
+         with pytest.raises(UploadValidationError):
+             service.create_upload_job(
+-                filename="a.png", content_type=content_type, file_size_bytes=size,
++                filename="a.png",
++                content_type=content_type,
++                file_size_bytes=size,
+             )
+     signer.authorize.assert_not_called()
+ 
+ 
+ def test_file_size_upper_boundary_and_immutable_reference() -> None:
+     result = make_service().create_upload_job(
+-        filename="a.pdf", content_type="application/pdf", file_size_bytes=10485760,
++        filename="a.pdf",
++        content_type="application/pdf",
++        file_size_bytes=10485760,
+     )
+     with pytest.raises(FrozenInstanceError):
+         result.job.object_reference.key = "changed"
+ 
+ 
+ def test_http_upload_and_original_get_contract(client: TestClient) -> None:
+-    response = client.post("/api/v1/documents/uploads", json={
+-        "filename": "a.pdf", "content_type": "application/pdf", "file_size_bytes": 123,
+-    })
++    response = client.post(
++        "/api/v1/documents/uploads",
++        json={
++            "filename": "a.pdf",
++            "content_type": "application/pdf",
++            "file_size_bytes": 123,
++        },
++    )
+     assert response.status_code == 201
+     assert response.headers["Cache-Control"] == "no-store"
+     body = response.json()
+     assert body["upload"]["method"] == "POST"
+     assert body["upload"]["expires_in_seconds"] == 300
+     assert set(body["job"]) == {
+-        "job_id", "filename", "content_type", "description", "status", "created_at",
++        "job_id",
++        "filename",
++        "content_type",
++        "description",
++        "status",
++        "created_at",
+     }
+     assert client.get(f"/api/v1/documents/{body['job']['job_id']}").json() == body["job"]
+ 
+ 
+ @pytest.mark.parametrize("size", [0, -1, True, "12", 1.5, 10485761])
+ def test_http_strict_size(client: TestClient, size: object) -> None:
+-    response = client.post("/api/v1/documents/uploads", json={
+-        "filename": "a.pdf", "content_type": "application/pdf", "file_size_bytes": size,
+-    })
++    response = client.post(
++        "/api/v1/documents/uploads",
++        json={
++            "filename": "a.pdf",
++            "content_type": "application/pdf",
++            "file_size_bytes": size,
++        },
++    )
+     assert response.status_code == 422
+ 
+ 
+ @pytest.mark.parametrize("field", ["key", "bucket", "acl"])
+ def test_http_rejects_client_storage_controls(client: TestClient, field: str) -> None:
+-    response = client.post("/api/v1/documents/uploads", json={
+-        "filename": "a.pdf", "content_type": "application/pdf", "file_size_bytes": 123,
+-        field: "malicious",
+-    })
++    response = client.post(
++        "/api/v1/documents/uploads",
++        json={
++            "filename": "a.pdf",
++            "content_type": "application/pdf",
++            "file_size_bytes": 123,
++            field: "malicious",
++        },
++    )
+     assert response.status_code == 422
+ 
+ 
+@@ -173,9 +221,14 @@ def test_http_signing_failure_is_sanitized(client: TestClient) -> None:
+     signer = Mock(spec=UploadAuthorizer)
+     signer.authorize.side_effect = UploadAuthorizationUnavailableError("SECRET_POLICY")
+     app.dependency_overrides[get_upload_authorizer] = lambda: signer
+-    response = client.post("/api/v1/documents/uploads", json={
+-        "filename": "a.pdf", "content_type": "application/pdf", "file_size_bytes": 123,
+-    })
++    response = client.post(
++        "/api/v1/documents/uploads",
++        json={
++            "filename": "a.pdf",
++            "content_type": "application/pdf",
++            "file_size_bytes": 123,
++        },
++    )
+     assert response.status_code == 503
+     assert response.headers["Cache-Control"] == "no-store"
+     assert response.json() == {"detail": "Upload authorization temporarily unavailable"}
+@@ -185,8 +238,13 @@ def test_http_storage_failure_contains_no_authorization(client: TestClient) -> N
+     repository = Mock()
+     repository.save.side_effect = PersistenceUnavailableError("internal")
+     app.dependency_overrides[get_document_repository] = lambda: repository
+-    response = client.post("/api/v1/documents/uploads", json={
+-        "filename": "a.pdf", "content_type": "application/pdf", "file_size_bytes": 123,
+-    })
++    response = client.post(
++        "/api/v1/documents/uploads",
++        json={
++            "filename": "a.pdf",
++            "content_type": "application/pdf",
++            "file_size_bytes": 123,
++        },
++    )
+     assert response.status_code == 503
+     assert response.json() == {"detail": "Job storage temporarily unavailable"}
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,2 @@
++# Ruff's formatting baseline must survive checkout on Windows as well as Linux.
++*.py text eol=lf

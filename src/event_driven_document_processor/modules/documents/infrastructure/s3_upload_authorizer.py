@@ -30,7 +30,11 @@ class S3UploadAuthorizer(UploadAuthorizer):
         self._expires_in_seconds = expires_in_seconds
 
     def authorize(
-        self, job_id: UUID, *, content_type: str, file_size_bytes: int,
+        self,
+        job_id: UUID,
+        *,
+        content_type: str,
+        file_size_bytes: int,
     ) -> UploadAuthorization:
         key = f"quarantine/{job_id}/{uuid4().hex}"
         try:
@@ -46,10 +50,14 @@ class S3UploadAuthorizer(UploadAuthorizer):
             )
         except (BotoCoreError, ClientError, ValueError) as error:
             logger.error(
-                "S3 operation=PresignPost job_id=%s error=%s", job_id, type(error).__name__,
+                "S3 operation=PresignPost job_id=%s error=%s",
+                job_id,
+                type(error).__name__,
             )
             raise UploadAuthorizationUnavailableError("Upload signing unavailable") from error
         return UploadAuthorization(
             object_reference=S3ObjectReference(bucket=self._bucket, key=key),
-            url=post["url"], fields=post["fields"], expires_in_seconds=self._expires_in_seconds,
+            url=post["url"],
+            fields=post["fields"],
+            expires_in_seconds=self._expires_in_seconds,
         )

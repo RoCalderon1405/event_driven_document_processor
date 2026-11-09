@@ -1,7 +1,8 @@
 # Floci 2.4.0 / Python 3.14 compatibility gate
 
 These are disposable **synthetic infrastructure probes**, not a ProcessingService or a
-production event workflow. Nothing under `src/` or the normal Compose file is changed.
+production event workflow. The probes remain separate from the Phase 3 business handler; the
+same explicit overlay now also offers opt-in processing and event-test profiles.
 
 ## Run
 
@@ -16,8 +17,9 @@ docker compose -p eddp-lambda-probe -f compose.lambda.yaml stop lambda-floci
 ```
 
 The compatibility file is usable standalone. It adds its own `lambda-floci` service, network,
-tmpfs state and test runner; it does not override or restart the development `floci` service.
-No ports are published. The API and test runner do not receive the Docker socket. The fixture
+separate persistent lambda-data volume and test runner; it does not override or restart the normal
+development `floci` service. Phase 3 publishes the authenticated gateway only on loopback 4567
+and its optional API on 8001. Neither API nor test runner receives the Docker socket. The fixture
 SDK clients use explicit dummy test/test credentials and refuse non-local endpoints.
 
 The default socket is `/var/run/docker.sock`; `DOCKER_SOCKET` can name a different local daemon
@@ -69,7 +71,7 @@ Fixtures delete only their unique AWS-shaped test resources. No Docker volume de
 commands are used, and the development persistent volume is never mounted into this emulator.
 Floci can create its own namespaced Lambda code-cache volumes for large ZIPs; do not prune them
 globally. Stop the probe service when done. A crash may leave probe resources/log groups until
-that ephemeral emulator is stopped; do not use cleanup commands against the development stack.
+that emulator is explicitly reconciled; do not use broad cleanup commands against either stack.
 
 ## Baseline checks
 

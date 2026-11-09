@@ -1,10 +1,10 @@
-# Standalone compatibility overlay: does NOT reconfigure the development Floci/API.
+# Explicit Lambda overlay: does NOT reconfigure the normal development Floci/API.
 # docker compose -p eddp-lambda-probe -f compose.lambda.yaml run --build --rm lambda-tests
 services:
   lambda-floci:
     image: floci/floci:2.4.0
     environment:
-      FLOCI_STORAGE_MODE: memory
+      FLOCI_STORAGE_MODE: persistent
       FLOCI_STORAGE_PERSISTENT_PATH: /app/data
       FLOCI_HOSTNAME: lambda-floci
       FLOCI_BASE_URL: http://lambda-floci:4566
@@ -22,10 +22,61 @@ services:
     volumes:
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - ./infra/compatibility/probe-runtime.yaml:/etc/floci/probe-runtime.yaml:ro
-    tmpfs:
-      - /app/data
+      - lambda-data:/app/data
+    ports:
+      - "127.0.0.1:${LAMBDA_GATEWAY_PORT:-4567}:4566"
     networks:
       - lambda-probe
+
+  processing-bootstrap:
+    profiles: ["processing"]
+    platform: linux/amd64
+    build:
+      context: .
+      target: event-bootstrap
+    environment: &processing-environment
+      AWS_ENDPOINT_URL: http://lambda-floci:4566
+      S3_INTERNAL_ENDPOINT_URL: http://lambda-floci:4566
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:4567
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_EC2_METADATA_DISABLED: "true"
+      EDDP_LOCAL_EMULATOR: "1"
+      DYNAMODB_TABLE_NAME: event-document-jobs
+      S3_BUCKET_NAME: event-document-uploads
+    depends_on:
+      lambda-floci:
+        condition: service_healthy
+    networks: [lambda-probe]
+
+  processing-api:
+    profiles: ["processing"]
+    build:
+      context: .
+      target: runtime
+    environment: *processing-environment
+    ports: ["127.0.0.1:8001:8000"]
+    depends_on:
+      processing-bootstrap:
+        condition: service_completed_successfully
+    networks: [lambda-probe]
+
+  event-tests:
+    profiles: ["event-test"]
+    build:
+      context: .
+      target: event-test
+    platform: linux/amd64
+    command: ["uv", "run", "--no-sync", "pytest", "-v", "-s", "-ra", "tests/events"]
+    environment:
+      <<: *processing-environment
+      RUN_EVENT_TESTS: "1"
+      S3_PUBLIC_ENDPOINT_URL: http://lambda-floci:4566
+    depends_on:
+      lambda-floci:
+        condition: service_healthy
+    networks: [lambda-probe]
 
   lambda-tests:
     build:
@@ -48,3 +99,6 @@ services:
 networks:
   lambda-probe:
     name: ${COMPOSE_PROJECT_NAME:-eddp-lambda-probe}_lambda_probe
+
+volumes:
+  lambda-data:

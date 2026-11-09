@@ -1,0 +1,13 @@
+services:
+  lambda-floci:
+    ports: !reset []
+    # Replace, do not merge, the development data mount. Only this emulator gets the socket.
+    volumes: !override
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra/compatibility/probe-runtime.yaml:/etc/floci/probe-runtime.yaml:ro
+    tmpfs: [/app/data]
+    environment:
+      FLOCI_STORAGE_MODE: memory
+      FLOCI_SERVICES_LAMBDA_CONTAINER_NAME_PREFIX: ${COMPOSE_PROJECT_NAME}-lambda
+  processing-api:
+    ports: !reset []

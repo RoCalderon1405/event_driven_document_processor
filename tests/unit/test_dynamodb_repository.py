@@ -182,9 +182,12 @@ def test_optional_object_reference_roundtrip(aws_client: DynamoDBClient, job: Do
     reference = S3ObjectReference("test-uploads", f"quarantine/{job.job_id}/opaque")
     job = replace(job, object_reference=reference)
     item = item_for(job)
-    item["object_reference"] = {"M": {
-        "bucket": {"S": reference.bucket}, "key": {"S": reference.key},
-    }}
+    item["object_reference"] = {
+        "M": {
+            "bucket": {"S": reference.bucket},
+            "key": {"S": reference.key},
+        }
+    }
     with Stubber(aws_client) as stub:
         stub.add_response("put_item", {}, {"TableName": "jobs", "Item": item})
         stub.add_response("get_item", {"Item": item})
@@ -193,11 +196,23 @@ def test_optional_object_reference_roundtrip(aws_client: DynamoDBClient, job: Do
         assert repository.get(job.job_id) == job
 
 
-@pytest.mark.parametrize("reference", [{"NULL": True}, {"M": {}}, {"M": {
-    "bucket": {"S": ""}, "key": {"S": "quarantine/opaque"},
-}}])
+@pytest.mark.parametrize(
+    "reference",
+    [
+        {"NULL": True},
+        {"M": {}},
+        {
+            "M": {
+                "bucket": {"S": ""},
+                "key": {"S": "quarantine/opaque"},
+            }
+        },
+    ],
+)
 def test_corrupt_object_reference_is_explicit(
-    aws_client: DynamoDBClient, job: DocumentJob, reference: dict,
+    aws_client: DynamoDBClient,
+    job: DocumentJob,
+    reference: dict,
 ) -> None:
     item = item_for(job)
     item["object_reference"] = reference

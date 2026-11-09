@@ -1,0 +1,2 @@
+# Ruff's formatting baseline must survive checkout on Windows as well as Linux.
+*.py text eol=lf

@@ -55,7 +55,8 @@ def get_upload_authorizer() -> UploadAuthorizer:
         client = create_s3_client(settings, public=True)
     except (BotoCoreError, ClientError, ValueError) as error:
         logging.getLogger(__name__).error(
-            "S3 client initialization failed error=%s", type(error).__name__,
+            "S3 client initialization failed error=%s",
+            type(error).__name__,
         )
         raise UploadAuthorizationUnavailableError("Upload signing unavailable") from error
     return S3UploadAuthorizer(client, settings.s3_bucket_name, settings.upload_expires_in_seconds)
@@ -68,7 +69,8 @@ def get_upload_service(
     """Inject a narrow signer and plain policy values, not Settings into application code."""
     settings = get_settings()
     return UploadService(
-        repository, authorizer,
+        repository,
+        authorizer,
         allowed_content_types=settings.upload_allowed_content_types,
         max_file_size_bytes=settings.upload_max_file_size_bytes,
     )

@@ -2,6 +2,15 @@
 
 An event-driven document-processing API built with Python and FastAPI. The system is designed to accept direct S3 uploads, process documents asynchronously, and expose job status without coupling HTTP request handling to background processing.
 
+## Continuous integration
+
+The GitHub Actions workflow is configured for pull requests and default-branch (**master**) pushes:
+Python 3.14/locked uv dependencies, pytest, full Ruff lint/format checks, Docker builds and isolated Floci/
+native Lambda event gates. No production credentials, deployment or image publishing is involved.
+See [CI instructions](infra/ci/README.md) for local reproduction, safe cleanup, fork security,
+sanitized-log tradeoffs, and required manual GitHub settings. Hosted-run evidence is tracked in
+[project status](docs/PROJECT_STATUS.md), separately from local checks.
+
 ## Implemented
 
 - Versioned REST API with FastAPI and Pydantic validation
@@ -16,11 +25,13 @@ An event-driven document-processing API built with Python and FastAPI. The syste
 - Unit, HTTP contract, and opt-in Floci integration tests
 - Direct private S3 uploads using short-lived presigned POST policies
 - Shared processing core with conditional leases, exact-version reads, SHA-256 and format validation
+- Opt-in S3 → SQS → thin Python 3.14 Lambda integration in the explicit Lambda Compose overlay
 
 The original creation endpoint still creates **metadata-only jobs**. The new upload endpoint
 creates pending jobs and authorization for direct S3 uploads. Uploads do not automatically trigger
-processing: the shared core is callable explicitly, with event wiring reserved for Phase 3.
-Production queues, consumers, deduplication, and callbacks are not implemented. No real AWS deployment
+processing in the normal stack. The separate [event stack](infra/events/README.md) installs S3/SQS
+delivery and a thin Lambda adapter around the shared core. Deduplication and callbacks are not
+implemented. No real AWS deployment
 is included. See [project status](docs/PROJECT_STATUS.md) for actual verification results.
 
 **Local development only:** authorization issuance has no authentication, ownership checks,
@@ -257,7 +268,8 @@ GET response intentionally does not expose the new internal object reference.
 `bootstrap/processing.py:get_processing_service()` composes a transport-independent
 `ProcessingService`. Call `process(job_id, S3ObjectReference(bucket, decoded_key), version_id)`
 with the saved upload reference and a nonempty immutable S3 version. There is no processing
-HTTP endpoint, installed notification, production queue consumer, or business Lambda handler yet.
+HTTP endpoint. Normal Compose still installs no event consumer; the explicit overlay adds the
+notification/queue/Lambda integration described below.
 The separate [Phase 1 Lambda probes](infra/compatibility/README.md) remain synthetic and unchanged.
 
 - The unchanged `JobRepository.save/get` serves creation and snapshots; a separate
@@ -306,6 +318,50 @@ unique disposable tables/versioned buckets, barrier-coordinated races and explic
 than lease sleeps. Run all Floci checks with the existing Compose test command above.
 See [ADR 0003](docs/decisions/0003-shared-processing.md) for invariants and retry/packaging limits.
 
+### Event integration (Milestone 4, Phase 3)
+
+Use the [explicit event stack instructions](infra/events/README.md) to run on separate local
+resources, with API port **8001** and authenticated S3 gateway **4567**. Normal development stays
+on 8000/4566 and keeps its original volume. Only the trusted overlay emulator gets the Docker
+socket; neither API nor test runner does. The overlay now has its own persistent lambda-data
+volume. Stop services without deleting volumes when finished.
+
+The event flow is API authorization → versioned private multipart POST → quarantine/ ObjectCreated
+notification → source-scoped SQS processing queue → Lambda event-source mapping → thin handler →
+existing ProcessingService → conditionally fenced DynamoDB result. All ObjectCreated variants,
+including Post, are configured. `documents/events/s3_events.py` handles encoded keys, opaque version
+IDs, nested records and S3 test notifications. Invalid events and poison bodies retry to the DLQ;
+permanently invalid **documents** must become FAILED before their message can be acknowledged.
+
+The handler returns ReportBatchItemFailures using only outer SQS IDs. One failed nested request
+keeps its entire message retryable; successful nested jobs can safely replay. Active claims are
+not acknowledged as completed. The first-successful-claim-wins policy, version-pinned reads and
+all concurrency transitions remain in Phase 2, without duplicated business processing.
+
+Default delivery settings: Lambda **150 s**, lease **180 s**, queue visibility **900 s**, **5 receives**
+before DLQ, batch size **2**, batching window **0**, source retention **4 days**, DLQ **14 days**.
+EventSettings rejects timeout/lease/visibility combinations that cannot safely recover a crashed
+claim. A preflight budget check defers nested work that cannot fit in the remaining invocation.
+No automatic DLQ replayer exists; malformed/oversized multi-record messages may require manual redrive.
+
+`Dockerfile` builds the complete locked runtime dependency set in the pinned official Lambda Linux
+Python 3.14 image and packages native shared libraries alongside the actual application. The private
+versioned ZIP is outside quarantine/ and cannot recursively trigger processing. The bootstrap
+preserves job/object versions and merges only its owned queue-policy Sid/notification ID. Serialize
+control-plane bootstrap runs; S3 notification read/merge/write cannot arbitrate concurrent external
+writers. IAM examples remain separate for API upload, processing/SQS consumption and provisioning.
+
+```sh
+docker compose -p eddp-lambda-probe -f compose.lambda.yaml --profile processing up --build -d processing-api
+uv run python -m infra.events.verify
+docker compose -p eddp-lambda-probe -f compose.lambda.yaml run --build --rm event-tests
+docker compose -p eddp-lambda-probe -f compose.lambda.yaml stop processing-api lambda-floci
+```
+
+Event tests use dedicated disposable resources; normal upload fixtures remain isolated. Actual
+results, native-runtime evidence and runtime limitations are in PROJECT_STATUS.md and
+[ADR 0004](docs/decisions/0004-s3-sqs-lambda.md). Phase 4 adds CI separately; no GHCR publication.
+
 See [the storage decision](docs/decisions/0001-local-dynamodb.md) and
 [repository guidance](AGENTS.md). The IAM templates in `infra/iam/` require replacing
 `REGION`, `ACCOUNT_ID`, and `TABLE_NAME` before use. Runtime access is restricted to
@@ -322,8 +378,8 @@ buckets. It does not delete objects. See [the upload security ADR](docs/decision
 ## Next capabilities
 
 1. Authentication, ownership checks, quotas, and rate limits before any public deployment
-2. S3 → SQS → thin Lambda integration around the shared core, with retry/DLQ policy
-3. Linux Lambda packaging and resource verification for native validation dependencies
+2. Publish the CI workflow and verify its first actual GitHub-hosted execution
+3. Real AWS IAM, execution-role, encryption, load and failure verification before deployment
 4. Cross-document SHA-256 deduplication (separate from implemented event idempotency)
 5. Reliable webhook delivery, expanded observability, and CI
 

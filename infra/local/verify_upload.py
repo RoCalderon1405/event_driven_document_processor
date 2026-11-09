@@ -23,17 +23,25 @@ def main() -> None:
     """Upload to the untouched API-issued localhost URL, then verify bytes and job state."""
     compose("up", "-d", "--build", "--wait", "api")
     with httpx.Client(timeout=20, trust_env=False) as http:
-        legacy = http.post(f"{BASE_URL}/api/v1/documents", json={
-            "filename": "legacy-check.pdf", "content_type": "application/pdf",
-        })
+        legacy = http.post(
+            f"{BASE_URL}/api/v1/documents",
+            json={
+                "filename": "legacy-check.pdf",
+                "content_type": "application/pdf",
+            },
+        )
         if legacy.status_code != 201:
             raise RuntimeError("Metadata-only job creation failed")
         legacy_job = legacy.json()
         data = b"%PDF-1.7\nlocal smoke bytes; not a validated PDF\n"
-        issued = http.post(f"{BASE_URL}/api/v1/documents/uploads", json={
-            "filename": "smoke.pdf",
-            "content_type": "application/pdf", "file_size_bytes": len(data),
-        })
+        issued = http.post(
+            f"{BASE_URL}/api/v1/documents/uploads",
+            json={
+                "filename": "smoke.pdf",
+                "content_type": "application/pdf",
+                "file_size_bytes": len(data),
+            },
+        )
         if issued.status_code != 201 or issued.headers.get("Cache-Control") != "no-store":
             raise RuntimeError("Upload issuance failed")
         result = issued.json()
@@ -42,7 +50,8 @@ def main() -> None:
         if location.scheme != "http" or location.netloc != "localhost:4566":
             raise RuntimeError("API did not issue the expected host-facing local S3 URL")
         response = http.post(
-            upload["url"], data=upload["fields"],
+            upload["url"],
+            data=upload["fields"],
             files={"file": ("smoke.pdf", data, "application/pdf")},
         )
         if response.status_code != 204:
@@ -58,12 +67,17 @@ def main() -> None:
                 raise RuntimeError("Job changed after Floci recreation")
         # Separate privileged test inspector; the application signer needs no read permission.
         s3 = boto3.client(
-            "s3", endpoint_url="http://localhost:4566",
+            "s3",
+            endpoint_url="http://localhost:4566",
             region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-            aws_access_key_id="test", aws_secret_access_key="test",
+            aws_access_key_id="test",
+            aws_secret_access_key="test",
             config=Config(
-                signature_version="s3v4", s3={"addressing_style": "path"},
-                connect_timeout=2, read_timeout=3, retries={"total_max_attempts": 3},
+                signature_version="s3v4",
+                s3={"addressing_style": "path"},
+                connect_timeout=2,
+                read_timeout=3,
+                retries={"total_max_attempts": 3},
             ),
         )
         try:

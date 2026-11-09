@@ -49,7 +49,9 @@ def test_exact_policy_and_unique_server_keys(s3_client: S3Client) -> None:
 
 
 def test_signing_failure_does_not_log_material(
-    s3_client: S3Client, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    s3_client: S3Client,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     def fail(**kwargs) -> None:
         raise NoCredentialsError()
@@ -57,7 +59,9 @@ def test_signing_failure_does_not_log_material(
     monkeypatch.setattr(s3_client, "generate_presigned_post", fail)
     with pytest.raises(UploadAuthorizationUnavailableError):
         S3UploadAuthorizer(s3_client, "test-uploads", 300).authorize(
-            uuid4(), content_type="application/pdf", file_size_bytes=123,
+            uuid4(),
+            content_type="application/pdf",
+            file_size_bytes=123,
         )
     assert "NoCredentialsError" in caplog.text
     assert "policy" not in caplog.text.lower()
@@ -72,9 +76,17 @@ def test_local_signer_requires_explicit_public_endpoint() -> None:
         )
 
 
-@pytest.mark.parametrize("origins", [("*",), ("https://*.example.com",),
-                                      ("http://localhost:3000/path",), ("http://user:pass@host",),
-                                      ("http://localhost:3000?",), ("http://localhost:3000#",)])
+@pytest.mark.parametrize(
+    "origins",
+    [
+        ("*",),
+        ("https://*.example.com",),
+        ("http://localhost:3000/path",),
+        ("http://user:pass@host",),
+        ("http://localhost:3000?",),
+        ("http://localhost:3000#",),
+    ],
+)
 def test_cors_rejects_wildcard_or_non_origin(origins: tuple[str, ...]) -> None:
     with pytest.raises(ValueError):
         Settings(s3_cors_allowed_origins=origins)
@@ -85,11 +97,16 @@ def test_cors_defaults_closed() -> None:
     assert Settings(s3_cors_allowed_origins=("http://localhost:3000",)).s3_cors_allowed_origins
 
 
-@pytest.mark.parametrize("field,value", [
-    ("upload_expires_in_seconds", 0), ("upload_expires_in_seconds", 901),
-    ("upload_max_file_size_bytes", 0), ("upload_allowed_content_types", ()),
-    ("upload_allowed_content_types", ("application/exe",)),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("upload_expires_in_seconds", 0),
+        ("upload_expires_in_seconds", 901),
+        ("upload_max_file_size_bytes", 0),
+        ("upload_allowed_content_types", ()),
+        ("upload_allowed_content_types", ("application/exe",)),
+    ],
+)
 def test_invalid_upload_configuration(field: str, value: object) -> None:
     with pytest.raises(ValueError):
         Settings(**{field: value})

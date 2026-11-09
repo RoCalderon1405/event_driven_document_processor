@@ -30,14 +30,17 @@ def create_upload(
 ) -> CreateUploadResponse:
     """Create a pending job and short-lived authorization for a private quarantine object."""
     result = service.create_upload_job(
-        filename=document.filename, content_type=document.content_type,
-        description=document.description, file_size_bytes=document.file_size_bytes,
+        filename=document.filename,
+        content_type=document.content_type,
+        description=document.description,
+        file_size_bytes=document.file_size_bytes,
     )
     response.headers["Cache-Control"] = "no-store"
     return CreateUploadResponse(
         job=DocumentJobResponse.model_validate(result.job),
         upload=UploadAuthorizationResponse(
-            url=result.upload.url, fields=result.upload.fields,
+            url=result.upload.url,
+            fields=result.upload.fields,
             expires_in_seconds=result.upload.expires_in_seconds,
         ),
     )

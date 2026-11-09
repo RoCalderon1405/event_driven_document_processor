@@ -1,0 +1,52 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["sqs:CreateQueue", "sqs:GetQueueUrl", "sqs:GetQueueAttributes", "sqs:SetQueueAttributes"],
+      "Resource": ["arn:aws:sqs:REGION:ACCOUNT_ID:PROCESSING_QUEUE_NAME", "arn:aws:sqs:REGION:ACCOUNT_ID:DLQ_NAME"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketNotification", "s3:PutBucketNotification"],
+      "Resource": "arn:aws:s3:::BUCKET_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::BUCKET_NAME/lambda-artifacts/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["lambda:CreateFunction", "lambda:GetFunctionConfiguration", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration"],
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:FUNCTION_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["iam:CreateRole", "iam:GetRole", "iam:PutRolePolicy"],
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/PROCESSING_ROLE_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping"],
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:event-source-mapping:*",
+      "Condition": {"ArnEquals": {"lambda:FunctionArn": "arn:aws:lambda:REGION:ACCOUNT_ID:function:FUNCTION_NAME"}}
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["lambda:ListEventSourceMappings"],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup"],
+      "Resource": "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/FUNCTION_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["iam:PassRole"],
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/PROCESSING_ROLE_NAME",
+      "Condition": {"StringEquals": {"iam:PassedToService": "lambda.amazonaws.com"}}
+    }
+  ]
+}

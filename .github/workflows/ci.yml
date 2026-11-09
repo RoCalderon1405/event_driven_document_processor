@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Python quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: '0.13.6'
+          enable-cache: false
+      - name: Locked dependencies, tests, lint and formatting
+        run: python infra/ci/run.py quality
+        timeout-minutes: 8
+
+  docker:
+    name: Docker integration
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      # Only disposable GitHub-hosted runners: Floci's Lambda emulator controls Docker.
+      - name: Isolated builds, regression, compatibility and real events
+        run: python infra/ci/run.py docker
+        timeout-minutes: 30
+      - name: Clean up this run only
+        if: always()
+        run: python infra/ci/run.py cleanup
+        timeout-minutes: 3

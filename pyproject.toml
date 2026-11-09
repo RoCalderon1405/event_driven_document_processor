@@ -37,7 +37,9 @@ line-length = 100
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 markers = [
     "floci: requires explicit RUN_FLOCI_TESTS=1 and a running Floci service",
     "lambda_compat: requires RUN_LAMBDA_COMPATIBILITY=1 and the isolated Lambda overlay",
+    "events: requires RUN_EVENT_TESTS=1 and the explicit Lambda overlay",
 ]

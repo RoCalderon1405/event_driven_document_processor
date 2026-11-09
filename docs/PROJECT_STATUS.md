@@ -1,5 +1,185 @@
 # Project status
 
+## Milestone 4 Phase 4 — secure GitHub Actions CI
+
+Implemented as uncommitted working-tree changes, preserving the prior Phase 3 work. No commit,
+push, deployment, GHCR publication, Coveralls, React or production credentials. The actual remote
+default branch was confirmed as **master**, not assumed to be main.
+
+### Files and responsibilities
+- `.github/workflows/ci.yml`: PR/master-push/manual triggers, read-only contents permission,
+  SHA-pinned checkout/Python/uv actions, no persisted checkout credentials or shared caches,
+  concurrency cancellation, bounded Ubuntu 24.04 quality and Docker jobs, always cleanup.
+- `infra/ci/run.py`: same stdlib entrypoint for hosted/local quality and Docker gates; sanitizes
+  the child environment and logs, generates exclusive per-run Compose projects, validates resolved
+  configuration, builds all relevant images and performs exact-project cleanup without volume removal.
+- `infra/ci/compose.regression.yaml`, `compose.events.yaml`, `empty.env`: CI-only removal of ports/
+  persistent mounts, memory/tmpfs emulator state, isolated Lambda runtime namespace/network/prefix,
+  no inherited developer `.env`. Base Compose files remain unchanged by Phase 4.
+- `infra/ci/pytest_gate.py`: explicit Docker execution enforcement; no skips/new xfails accepted.
+  Existing exact strict SSE assertion xfail remains untouched, including unexpected-pass failure.
+- `tests/unit/test_ci.py`: 27 tests for environment isolation, fixed command construction, safe
+  config/cleanup, failure cleanup, payload-free logs and result enforcement. Five spawn real pytest
+  to verify pass/fail/skip/xfail/xpass exit behavior, not only synthetic reports.
+- `infra/ci/README.md`, ADR 0005, README and CHANGELOG: behavior, trust/logging tradeoffs, commands,
+  manual GitHub approval/branch settings and truthful separation of hosted versus local evidence.
+- `.gitignore` / `.dockerignore`: exclude only the generated CI cleanup state from version/build input.
+
+### Separate formatting-only baseline
+The 11 baseline files were clean before formatting. Ruff formatting changed no Python AST in any
+of them; no business edits were mixed in. `.gitattributes` adds consistent Python LF checkout policy.
+`docs/changes/formatting-baseline.patch` contains precisely those 11 files plus that policy, separate
+from all CI and earlier Phase 3 changes. Its `git apply --cached --check` passed; the index remains
+untouched. `docs/changes/formatting-baseline.md` lists every path and user-operated staging commands.
+`routes.py` needed only a final newline. Full formatting now passes without exclusions or weakened rules.
+
+### Actual verification in this environment
+- `uv sync --locked` and the reusable **quality** command passed with uv 0.13.6 / Python 3.14.7.
+- Final direct offline pytest: **247 passed, 57 intentional opt-in skips**. The skip counts
+  are not claimed as executed integration evidence. All **27 new CI tests passed**, including the
+  five actual pytest subprocess enforcement cases.
+- Full Ruff lint and `ruff format --check .` passed (**95 files already formatted**).
+- `docker compose config --quiet` passed. The full reusable **Docker** command passed: both override
+  configurations validated, all runtime/test/native Lambda/event images built, isolated regression
+  **284 passed / 0 skipped / 1 known SSE xfailed**, compatibility **5 passed / 0 skipped**, and real
+  event chain **9 passed / 0 skipped**. Both exact-project cleanup commands passed. This initial
+  image contained 22 CI tests. The final isolated regression rerun, including all 27 CI tests and
+  the final plugin, passed **289 / 0 skipped / 1 known SSE xfailed**, with scoped cleanup passed.
+- The required normal development Docker command also passed: **289 passed, 14 skipped,
+  1 existing SSE xfailed**. Its 14 skips are the separately invoked compatibility/event suites.
+- `uv run python infra/local/verify_persistence.py` passed after the formatting/CI changes, retaining
+  the verification job across API restart and Floci container recreation without volume deletion.
+- The formatted `infra/local/verify_upload.py` also passed: signed upload, anonymous denial, legacy
+  compatibility and object persistence after Floci recreation.
+- Live read-only inspection during the CI event gate confirmed no published ports, no Compose data
+  volumes, and only two bind mounts on lambda-floci (socket and read-only runtime YAML). The test
+  container and normal CI Floci had no bind/data mounts. Development project names were not reused.
+- Post-run inspection confirmed the complete CI run removed its containers/networks and cleanup
+  state. It also exposed **eight isolated Floci Lambda code-artifact volumes** retained by the
+  launcher's implementation, with the exact CI `floci_namespace` label. They were not deleted:
+  no persistent-volume removal is authorized or needed for correctness. No development data volume
+  was reused/deleted. This local disk-cost limitation is documented; hosted runner disposal handles it.
+- Repeated cleanup with no state passed as a safe no-op. Normal development API/Floci remain healthy.
+- Actionlint **1.7.12** validated the workflow. Its official Windows/amd64 release archive was
+  checked against SHA-256 `6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9`
+  before execution. Action commit pins were independently resolved upstream and action.yml inputs read.
+- `git diff --check` passed with Git line-ending warnings only. No staged changes, commit or push.
+
+### Hosted execution and manual settings
+**Hosted run blocked/not executed**: the new workflow exists only in the working tree and cannot be
+dispatched until published; committing/pushing is prohibited by the request. `gh` is also unavailable.
+Actionlint and local Linux containers are not a successful GitHub-hosted Ubuntu run.
+
+After user publication, enable Actions/allow the three pinned upstream actions, retain read-only
+workflow permissions, require fork-workflow approval, and run the workflow. Then protect master with
+the actual **Python quality** and **Docker integration** required checks. No repository secrets or
+deployment credentials/settings are required. Do not use persistent/self-hosted runners: the Lambda
+emulator controls Docker, so runner disposability is the privilege boundary. See infra/ci/README.md.
+
+### Remaining limits
+The existing SSE metadata xfail still does not prove at-rest encryption. Real AWS IAM/workload-role
+delivery and GitHub-hosted runner behavior remain unverified. Cold image pulls or upstream registry
+outages may hit bounded timeouts; base Python/uv/Floci image tags are not newly digest-pinned by this
+phase (the actual Lambda runtime already is). Raw test/build diagnostics are intentionally withheld
+from CI output; failures must be reproduced privately with emulator credentials. Hard local interruption
+can leave scoped Docker resources; retain `.ci-state.json` and retry cleanup, never prune local data.
+
+## Milestone 4 Phase 3 — explicit S3/SQS/Lambda event integration
+
+The normal API contracts, Phase 2 application/domain/infrastructure processing code and Phase 1
+probe implementations remain unchanged. The opt-in Lambda overlay connects real versioned upload
+notifications to SQS and a thin Python 3.14 handler. No GitHub Actions, GHCR, webhooks, OCR, AI or
+cross-document deduplication was added. The initial working tree was clean; no commit/push or
+persistent-volume deletion/prune was performed.
+
+### Files, connections and configuration
+- `bootstrap/lambda_handler.py`: SQS batch adapter, remaining-time guard, sanitized outcome logs,
+  guarded local dummy credentials and delegation to the existing ProcessingService factory.
+- `documents/events/s3_events.py` / `__init__.py`: bounded strict S3 body decoding, one-time key
+  unquoting, opaque version IDs, quarantine job UUIDs and matching S3 test-event handling.
+- `bootstrap/event_settings.py`: shared Pydantic delivery settings. Default record budget **133 s**
+  < Lambda timeout **150 s** < claim lease **180 s**; visibility **900 s** covers both six timeouts
+  and lease expiry plus five seconds. Batch size **2**, batching window **0**, **5 receives** before
+  DLQ, source retention **4 days** (existing longer periods retained), DLQ retention **14 days**.
+- `infra/events/bootstrap.py`: explicit local-only provisioning/reconciliation for queues/DLQ,
+  scoped policies/role/log group, private versioned artifact, Lambda, mapping and notifications.
+  It merges owned policy Sid/notification ID, preserves unrelated notification kinds/statements,
+  preserves other DLQ sources, and never deletes/recreates resources or weakens an explicit DLQ deny.
+- `infra/events/package.py`, `Dockerfile`: deterministic full locked runtime packaging in the
+  official pinned Linux/amd64 Python 3.14 Lambda image, retaining native libraries and layout.
+  Artifact versions live outside quarantine/ and cannot recursively trigger processing.
+- `compose.lambda.yaml`: optional processing bootstrap/API and event-test targets; separate
+  persistent lambda-data volume, loopback gateway **4567**, optional API **8001**. Only lambda-floci
+  receives the Docker socket. Normal Compose/API/volume stay separate on **4566/8000**.
+- `infra/events/verify.py` / README: real host-facing HTTP verification and reproducible commands.
+- `tests/events/`: real event-chain tests, scoped resources and a test-only crash/timeout wrapper;
+  production artifacts/handlers contain no fault switches or diagnostic backdoor action.
+  `tests/unit/test_event_handler.py`: 30 offline transport/budget/merge/packaging/fault-fixture cases.
+- `infra/iam/processing-policy.json`, new queue/provisioning examples: separate job/versioned-read,
+  SQS-consumption, source-scoped S3 delivery, log-stream and privileged provisioning/PassRole roles.
+  API upload permissions are unchanged; examples are not deployed or verified AWS authorization.
+- `pyproject.toml`: explicit event marker and root import path for local infrastructure test tools;
+  no dependency/lockfile change needed. README, CHANGELOG, compatibility README and ADR 0004 updated.
+
+### Verified outcomes
+- Actual API-issued presigned POST notifications completed PDF/PNG/JPEG jobs in the official Lambda
+  runtime with independently checked SHA-256, actual lengths and exact S3 version IDs. This proves
+  pikepdf/Pillow native decoding in Lambda, not merely successful imports in the Linux test runner.
+- First complete event run: **7 passed, 2 failed**. Passing gates covered all genuine formats,
+  malformed documents becoming FAILED, duplicate/delayed/reversed/concurrent delivery, nested
+  records/outer-ID partial failures/S3 test events, active-claim retry and expiry recovery,
+  poison/unavailable-version DLQ delivery, and repeated bootstrap preserving data/notifications.
+  The two fault tests did not reach a claim because their test-only wrapper indexed an empty S3
+  test notification. The wrapper was corrected to find real nested requests; a regression unit
+  case was added. The corrected full event suite then passed **9/9 in 462.28 s**, with no skips
+  or expected failures. Both real worker exit and timeout cases committed an initial claim and
+  subsequently completed the same version with a new fencing token after redelivery.
+- The reversed/concurrent gate was strengthened with distinct, equal-length valid PDF versions;
+  its separate rerun **passed**, including the selected newer version's independent hash.
+- Verified final-suite artifact: **48,730,086 compressed bytes / 121,787,023 unpacked bytes**, including
+  Linux pikepdf/Pillow .so files and no Windows .pyd files; below Lambda's 250 MiB unpacked limit.
+  Source/metadata edits change the ZIP hash/size; artifacts remain private and version-pinned.
+- `uv run python -m infra.events.verify`: **passed all three genuine formats** through the deployed
+  host API on 8001, actual signed POST on 4567, real S3/SQS/Lambda and persisted internal facts.
+  Its first invocation exposed Windows cp1252 console handling of arrows in its success message;
+  output was made ASCII and the complete verifier passed. Verification jobs/objects are retained.
+- Repeated **real development bootstrap** passed. A privileged before/after comparison verified
+  all existing event-development job items and quarantine object-version IDs remained identical.
+  Disposable-resource tests additionally verified unrelated notification and queue-policy entries.
+- Original separate compatibility suite: **5 passed in 96.08 s**, no skips/xfails. Cold/warm runtime,
+  private exact-version SDK access, partial batch retry and both original DLQ gates remain intact.
+- Final normal Docker regression: **262 passed, 14 skipped, 1 xfailed**. Skips are five separate
+  compatibility and nine separate event-chain tests. The existing strict SSE-S3 xfail remains;
+  no encryption-at-rest verification is claimed.
+- Final `uv run pytest`: **220 passed, 57 opt-in skips** on Windows Python 3.14.7. Skips are
+  18 existing Floci cases, 25 processing-core Floci cases, five compatibility and nine event gates;
+  the Docker/separate suites above executed those opted-in checks.
+- `uv sync --locked`, Ruff lint, normal and all-profile overlay Compose validation passed.
+  Full repository formatting still flags **11 unchanged baseline files**; no unrelated formatting
+  was performed. All **13 new Python files** passed targeted formatting. `git diff --check` passed
+  with Windows line-ending conversion warnings only.
+- Both existing persistence and upload verification scripts **passed** against normal development,
+  including API restart, Floci recreation, legacy jobs and retained object bytes.
+- Initial event fixture used the SDK's default presigned POST signature variant; it was corrected
+  to explicit SigV4. S3 authentication/private bucket enforcement was never disabled or weakened.
+- Read-only inspection found no remaining event-test-namespaced functions, queues, tables,
+  buckets or roles. Event-development objects/jobs/artifacts remain retained. Both APIs and normal
+  Floci were inspected: only lambda-floci had a socket mount. After verification the processing
+  API and privileged emulator were stopped; no Lambda runtime containers remained running.
+  Normal API/Floci remain healthy on 8000/4566, with the original persistent volume retained.
+
+### Remaining limits and next phase
+The implementation is local-only; real AWS IAM/execution-role delivery/encryption, ARM64/rootless
+Docker, GitHub-hosted runners, high load and host-crash durability remain unverified. Format validation
+is not malware scanning or a security sandbox. Serialized control-plane reconciliation is required
+because S3 notification merging has no cross-writer compare-and-swap. Large/slow nested messages can
+exhaust bounded retries and require retained-DLQ inspection/redrive. No automatic redriver or sweeper.
+
+Phase 4 is ready to wrap the repeatable unit/regression/compatibility/event commands in GitHub Actions:
+all local gates, including final crash/timeout recovery, are green. A GitHub-hosted Linux runner still
+needs its own real execution; no CI workflow has been introduced or claimed as passed in this phase.
+See ADR 0004 and infra/events/README.md for exact commands, security boundaries and retry semantics.
+
 ## Milestone 4 Phase 2 — shared document processing core
 
 Implemented without production notifications, SQS consumers, business Lambda handlers, GitHub

@@ -11,6 +11,16 @@
       "Effect": "Allow",
       "Action": ["s3:GetObjectVersion"],
       "Resource": "arn:aws:s3:::BUCKET_NAME/quarantine/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+      "Resource": "arn:aws:sqs:REGION:ACCOUNT_ID:PROCESSING_QUEUE_NAME"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/FUNCTION_NAME:*"
     }
   ]
 }

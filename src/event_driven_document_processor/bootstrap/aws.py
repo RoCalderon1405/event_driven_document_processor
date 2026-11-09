@@ -29,8 +29,10 @@ def create_dynamodb_client(settings: Settings) -> DynamoDBClient:
 def create_s3_client(settings: Settings, *, public: bool = False) -> S3Client:
     """Use the actual caller's endpoint for signing; never rewrite generated URLs."""
     endpoint = settings.s3_public_endpoint_url if public else settings.s3_internal_endpoint_url
-    if public and endpoint is None and (
-        settings.s3_internal_endpoint_url is not None or settings.aws_endpoint_url is not None
+    if (
+        public
+        and endpoint is None
+        and (settings.s3_internal_endpoint_url is not None or settings.aws_endpoint_url is not None)
     ):
         raise ValueError("A public S3 endpoint is required with local AWS endpoints")
     return boto3.client(
@@ -38,7 +40,8 @@ def create_s3_client(settings: Settings, *, public: bool = False) -> S3Client:
         endpoint_url=str(endpoint) if endpoint else None,
         region_name=settings.aws_default_region,
         config=Config(
-            signature_version="s3v4", s3={"addressing_style": "path"},
+            signature_version="s3v4",
+            s3={"addressing_style": "path"},
             connect_timeout=settings.aws_connect_timeout,
             read_timeout=settings.aws_read_timeout,
             retries={"mode": "standard", "total_max_attempts": settings.aws_max_attempts},
