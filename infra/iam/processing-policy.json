@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+      "Resource": "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/TABLE_NAME",
+      "Condition": {"ForAllValues:StringLike": {"dynamodb:LeadingKeys": ["JOB#*"]}}
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObjectVersion"],
+      "Resource": "arn:aws:s3:::BUCKET_NAME/quarantine/*"
+    }
+  ]
+}

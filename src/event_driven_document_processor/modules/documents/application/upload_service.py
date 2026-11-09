@@ -43,8 +43,11 @@ class UploadService:
     ) -> UploadJobResult:
         """Issue authorization only for validated metadata and successfully saved jobs."""
         if (
-            not isinstance(filename, str) or not filename.strip() or len(filename) > 255
-            or filename in {".", ".."} or any(c in filename for c in "/\\")
+            not isinstance(filename, str)
+            or not filename.strip()
+            or len(filename) > 255
+            or filename in {".", ".."}
+            or any(c in filename for c in "/\\")
             or any(ord(c) < 32 or ord(c) == 127 for c in filename)
         ):
             raise UploadValidationError("filename must be a nonempty display name without paths")
@@ -56,12 +59,19 @@ class UploadService:
             raise UploadValidationError("description must contain at most 500 characters")
         job_id = uuid4()
         authorization = self._authorizer.authorize(
-            job_id, content_type=content_type, file_size_bytes=file_size_bytes,
+            job_id,
+            content_type=content_type,
+            file_size_bytes=file_size_bytes,
         )
         job = DocumentJob(
-            job_id=job_id, filename=filename, content_type=content_type, description=description,
-            status=DocumentStatus.PENDING, created_at=datetime.now(UTC),
+            job_id=job_id,
+            filename=filename,
+            content_type=content_type,
+            description=description,
+            status=DocumentStatus.PENDING,
+            created_at=datetime.now(UTC),
             object_reference=authorization.object_reference,
+            declared_size_bytes=file_size_bytes,
         )
         self._repository.save(job)
         return UploadJobResult(job=job, upload=authorization)

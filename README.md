@@ -15,10 +15,12 @@ An event-driven document-processing API built with Python and FastAPI. The syste
 - In-memory persistence for isolated unit and HTTP contract tests
 - Unit, HTTP contract, and opt-in Floci integration tests
 - Direct private S3 uploads using short-lived presigned POST policies
+- Shared processing core with conditional leases, exact-version reads, SHA-256 and format validation
 
 The original creation endpoint still creates **metadata-only jobs**. The new upload endpoint
-creates pending jobs and authorization for direct S3 uploads. Files are not validated or processed.
-Queues, workers, deduplication, and callbacks are not implemented. No real AWS deployment
+creates pending jobs and authorization for direct S3 uploads. Uploads do not automatically trigger
+processing: the shared core is callable explicitly, with event wiring reserved for Phase 3.
+Production queues, consumers, deduplication, and callbacks are not implemented. No real AWS deployment
 is included. See [project status](docs/PROJECT_STATUS.md) for actual verification results.
 
 **Local development only:** authorization issuance has no authentication, ownership checks,
@@ -206,8 +208,8 @@ paths/control characters and client-supplied bucket/key/ACL controls are rejecte
 An expired authorization requires creating a new upload job; there is no renewal or confirmation
 endpoint. Authorizations are **replayable until expiration** and can overwrite the same object
 with another payload satisfying the policy. Upload success does not change `PENDING` or prove
-the document is valid: MIME metadata is untrusted, and future processing must inspect actual
-bytes and malicious content before treating quarantine objects as safe. Never log or share
+the document is valid: MIME metadata is untrusted. Explicit core processing checks format but
+does not establish that quarantine objects are malware-free. Never log or share
 authorization fields. S3 errors are returned by S3 directly, not translated by FastAPI.
 
 ### Retrieve a job
@@ -247,8 +249,62 @@ reserved for future duplicate detection; no hash items are created in this miles
 The `JobRepository` Protocol and domain remain storage/framework independent.
 Upload use cases depend on a narrow `UploadAuthorizer` Protocol, implemented by the boto3 S3
 adapter. An optional frozen `S3ObjectReference` is saved with the initial job; old items missing
-that attribute remain readable. Signing URLs/policies/fields are never persisted. The existing
+  that attribute remain readable. Signing URLs/policies/fields are never persisted. The existing
 GET response intentionally does not expose the new internal object reference.
+
+### Shared processing core (Milestone 4, Phase 2)
+
+`bootstrap/processing.py:get_processing_service()` composes a transport-independent
+`ProcessingService`. Call `process(job_id, S3ObjectReference(bucket, decoded_key), version_id)`
+with the saved upload reference and a nonempty immutable S3 version. There is no processing
+HTTP endpoint, installed notification, production queue consumer, or business Lambda handler yet.
+The separate [Phase 1 Lambda probes](infra/compatibility/README.md) remain synthetic and unchanged.
+
+- The unchanged `JobRepository.save/get` serves creation and snapshots; a separate
+  `ProcessingStore` uses **conditional UpdateItem only** for all processing state changes.
+- `PENDING → PROCESSING → COMPLETED`, or `PROCESSING → FAILED` for permanent content failures.
+  Claims bind a UUID attempt token, exact version and lease. **First successfully claimed version
+  wins**, not necessarily the first uploaded version. Later replay-created versions cannot replace it.
+- Only the selected version can recover an expired claim with a new token. Completion/failure
+  requires the current token, version, PROCESSING status and unexpired lease. Active/conflicting
+  claims raise retryable errors; they are not reported as successful processing.
+- Exact-version S3 reads use 64 KiB chunks, SHA-256 and size-bounded temporary disk staging.
+  Streams and staged files close/clean up on success, rejection and infrastructure errors.
+  New upload jobs persist declared length internally; legacy rows without it remain readable.
+- Actual PDF, PNG and JPEG contents are validated with pikepdf/qpdf and Pillow in a deadline-bound
+  child process. PDFs require a real page tree and valid syntax/streams, with recovery disabled;
+  encrypted PDFs are rejected. Images require integrity verification and full decoding. Animated
+  images, oversized dimensions, malformed/truncated files and mismatched formats are rejected.
+- Optional processing metadata, hashes, lengths and fixed failure codes remain internal;
+  **existing API response fields and `file_name` compatibility are unchanged**. Format validation
+  is not malware scanning: JavaScript, embedded files and other dangerous content may remain.
+- S3/DynamoDB failures do not mark a document FAILED. They propagate for retry; an interrupted
+  claim remains PROCESSING until same-version recovery after expiry. No heartbeat or sweeper exists.
+  SHA-256 records content identity only; no HASH# records or cross-document deduplication are created.
+
+Pydantic Settings / Compose expose these processing defaults (also in `.env.example`):
+`PROCESSING_MAX_FILE_SIZE_BYTES=10485760`, `PROCESSING_LEASE_SECONDS=180`,
+`PROCESSING_READ_TIMEOUT_SECONDS=60`, `PROCESSING_VALIDATION_TIMEOUT_SECONDS=15`,
+`PROCESSING_MAX_IMAGE_PIXELS=20000000`, `PROCESSING_MAX_IMAGE_DIMENSION=16384`,
+`PROCESSING_MAX_PDF_PAGES=500`, `PROCESSING_MAX_PDF_OBJECTS=50000`.
+The lease must exceed read plus validation budgets by more than ten seconds. Reads have a
+cooperative overall deadline plus bounded SDK I/O timeouts; use synchronized UTC worker clocks.
+Parser children additionally have a 512 MiB address-space limit and ten-second soft CPU budget
+on Linux. Windows has decoder/dimension limits and the wall deadline, **not** POSIX memory/CPU
+limits. This process boundary is not a security sandbox. Unexpected native crashes remain retryable.
+
+Bootstrap now enables bucket versioning without deleting existing data or null versions.
+Legacy null-version uploads are not processed implicitly: create a new upload to obtain a real
+version. No migration, object scan, notification or development-data deletion is performed.
+`infra/iam/processing-policy.json` is a separate, **undeployed** processor permissions example:
+GetItem/UpdateItem on JOB# keys and GetObjectVersion on quarantine objects, without PutItem or
+latest-object reads. Existing API privileges are not broadened; bootstrap adds PutBucketVersioning.
+
+New tests live in `tests/unit/test_processing_*.py`, `tests/unit/test_document_validation.py`
+and `tests/integration/test_processing_floci.py`. Integration tests use genuine generated files,
+unique disposable tables/versioned buckets, barrier-coordinated races and explicit clocks rather
+than lease sleeps. Run all Floci checks with the existing Compose test command above.
+See [ADR 0003](docs/decisions/0003-shared-processing.md) for invariants and retry/packaging limits.
 
 See [the storage decision](docs/decisions/0001-local-dynamodb.md) and
 [repository guidance](AGENTS.md). The IAM templates in `infra/iam/` require replacing
@@ -266,9 +322,9 @@ buckets. It does not delete objects. See [the upload security ADR](docs/decision
 ## Next capabilities
 
 1. Authentication, ownership checks, quotas, and rate limits before any public deployment
-2. Upload confirmation/content validation and eventual event notifications
-3. SQS-driven Lambda/worker processing and document validation
-4. SHA-256 deduplication, idempotency, retries, and DLQ
+2. S3 → SQS → thin Lambda integration around the shared core, with retry/DLQ policy
+3. Linux Lambda packaging and resource verification for native validation dependencies
+4. Cross-document SHA-256 deduplication (separate from implemented event idempotency)
 5. Reliable webhook delivery, expanded observability, and CI
 
 No AWS infrastructure has been deployed.

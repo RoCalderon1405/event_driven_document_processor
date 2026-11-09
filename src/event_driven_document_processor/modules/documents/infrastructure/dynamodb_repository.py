@@ -17,6 +17,10 @@ from event_driven_document_processor.modules.documents.domain.models import (
     DocumentJob,
     S3ObjectReference,
 )
+from event_driven_document_processor.modules.documents.infrastructure.processing_mapping import (
+    deserialize_processing,
+    serialize_processing,
+)
 
 if TYPE_CHECKING:
     from mypy_boto3_dynamodb import DynamoDBClient
@@ -60,10 +64,16 @@ class DynamoDBJobRepository(JobRepository):
             "created_at": {"S": job.created_at.isoformat()},
         }
         if job.object_reference is not None:
-            item["object_reference"] = {"M": {
-                "bucket": {"S": job.object_reference.bucket},
-                "key": {"S": job.object_reference.key},
-            }}
+            item["object_reference"] = {
+                "M": {
+                    "bucket": {"S": job.object_reference.bucket},
+                    "key": {"S": job.object_reference.key},
+                }
+            }
+        if job.declared_size_bytes is not None:
+            item["declared_size_bytes"] = {"N": str(job.declared_size_bytes)}
+        if job.processing is not None:
+            item["processing"] = {"M": serialize_processing(job.processing)}
         try:
             self._client.put_item(TableName=self._table_name, Item=item)
         except (BotoCoreError, ClientError) as error:
@@ -102,7 +112,8 @@ class DynamoDBJobRepository(JobRepository):
         if "object_reference" in item:
             stored_reference = item["object_reference"]["M"]
             reference = S3ObjectReference(
-                bucket=stored_reference["bucket"]["S"], key=stored_reference["key"]["S"],
+                bucket=stored_reference["bucket"]["S"],
+                key=stored_reference["key"]["S"],
             )
         return DocumentJob(
             job_id=stored_id,
@@ -112,4 +123,10 @@ class DynamoDBJobRepository(JobRepository):
             status=DocumentStatus(item["status"]["S"]),
             created_at=created_at,
             object_reference=reference,
+            declared_size_bytes=(
+                int(item["declared_size_bytes"]["N"]) if "declared_size_bytes" in item else None
+            ),
+            processing=(
+                deserialize_processing(item["processing"]["M"]) if "processing" in item else None
+            ),
         )

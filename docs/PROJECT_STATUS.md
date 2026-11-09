@@ -1,5 +1,99 @@
 # Project status
 
+## Milestone 4 Phase 2 — shared document processing core
+
+Implemented without production notifications, SQS consumers, business Lambda handlers, GitHub
+Actions, OCR, text extraction, AI classification or cross-document deduplication. Phase 1 probe
+files, API endpoints/schemas, filename alias and JobRepository.save/get signatures are unchanged.
+The working tree was clean at the start; no commit/push or Docker volume deletion was performed.
+
+### Files and responsibilities
+- `documents/application/processing_service.py`: single transport-independent processing use case;
+  checks saved references, claims, stages/hashes bounded bytes, invokes validation, fences results.
+- `application/processing_ports.py`, `processing_errors.py`: narrow state/reader/validator contracts,
+  retryable infrastructure/claim errors, invalid-event errors and permanent document codes.
+- `domain/processing.py`, `domain/models.py`: immutable optional processing facts and declared length.
+- `infrastructure/processing_store.py`: conditional DynamoDB claim/recovery/finish UpdateItem calls;
+  `processing_mapping.py` and modified `dynamodb_repository.py`: additive internal serialization.
+- `infrastructure/s3_object_reader.py`: exact-version GetObject, bounded chunks and body cleanup.
+- `infrastructure/document_validator.py`, `validation_worker.py`: bounded child-process format
+  validation with maintained Pillow 12.3.0 and pikepdf 10.18.0, without parser diagnostic leakage.
+- `bootstrap/processing.py`, `bootstrap/settings.py`: lazy composition and validated processing
+  policies. `.env.example` and Compose expose budgets without adding a consumer service.
+- `application/upload_service.py`: persists declared upload size internally, retaining HTTP schemas.
+- `infra/local/init_s3.py`: enables versioning idempotently without deleting existing objects.
+  `infra/iam/processing-policy.json` is a separate undeployed processor permissions example;
+  bootstrap IAM example adds PutBucketVersioning, API permissions remain unchanged.
+- `tests/unit/test_processing_*.py`, `test_document_validation.py`,
+  `tests/integration/test_processing_floci.py`: 103 new cases; `tests/conftest.py` generates genuine
+  PDF/PNG/JPEG fixtures. Existing upload-fixture cleanup and bootstrap assertions support versioning.
+- README, CHANGELOG and ADR 0003 document connections, policies, invariants and Phase 3 gates.
+  `pyproject.toml` / `uv.lock` add the maintained validation dependencies (including transitive lxml).
+
+### Verified behavior and concurrency strategy
+- PENDING → PROCESSING → COMPLETED or PROCESSING → FAILED for fixed permanent content codes.
+  Internal references, metadata, hash, length and failure details remain absent from public schemas.
+- First successful conditional claim selects one exact version. A unique token and normalized UTC
+  lease fence every attempt. Only that version may recover after expiry; active conflicts retry.
+- Terminal writes require matching token/version, PROCESSING state and a still-valid lease.
+  Barrier-coordinated real DynamoDB races demonstrate one initial/recovery winner; explicit clocks
+  verify expiry boundaries and stale workers cannot overwrite newer claims or terminal results.
+- No processing save/PutItem or HASH# record creation. Actual older versions are read even after
+  overwrite, same-version terminal replays are no-ops and other versions cannot replace results.
+- Bounded 64 KiB S3 chunks, default 10 MiB staging limit, SHA-256 and declared-size checks; bodies
+  close on EOF/early rejection/version mismatch/read error. Temporary files clean up on every exit.
+- Genuine valid and invalid PDF/PNG/JPEG cases pass, including truncation, malformed content,
+  mismatch, empty/oversized/incorrect-size documents, encrypted PDF and image/PDF resource limits.
+- Simulated transient S3 failure against a real selected version leaves PROCESSING, rejects an
+  active duplicate, then completes with a fresh token after clock-driven expiry and restored S3.
+  Missing exact versions never fall back to latest; infrastructure errors do not become FAILED.
+- Existing optional-attribute-free records remain readable; corrupt present new attributes fail
+  explicitly. Structured records/key-value processing logs contain only IDs/events/fixed codes.
+
+### Actual verification outcomes
+- `uv sync` and `uv sync --locked`: passed; Python >=3.14 and uv_build retained.
+- `uv run pytest`: **190 passed, 48 skipped** on Windows Python 3.14.7. Skips are 18 existing
+  opt-in Floci cases, 25 new processing Floci cases and five separate Lambda compatibility gates.
+- `docker compose --profile test run --build --rm tests`: **232 passed, 5 skipped, 1 xfailed**
+  on Linux Python 3.14.10. All 25 processing integration cases passed. Five skipped Lambda gates
+  were executed separately; strict SSE-S3 expected failure remains, not resolved encryption proof.
+- Separate `compose.lambda.yaml` compatibility run: **5 passed in 77.62 seconds**, no skips/xfails;
+  unchanged cold/warm, exact-version S3/DynamoDB, partial batch retry and both DLQ gates passed.
+  Probe emulator stopped afterward; no Docker socket added to normal services.
+- `uv run ruff check .`: passed. All **23 new/modified Python files** passed targeted formatting.
+- Whole-repository format check: **11 existing unchanged files still require formatting**.
+  Only files functionally touched by this phase were formatted; no unrelated baseline cleanup.
+- Normal and isolated Lambda Compose configurations: passed validation. `git diff --check`: passed
+  with Windows line-ending conversion warnings only.
+- `uv run python infra/local/verify_persistence.py`: passed API restart/Floci recreation retention.
+- `uv run python infra/local/verify_upload.py`: passed host-facing upload, anonymous denial, legacy
+  jobs and retained object bytes across Floci recreation. Both scripts retain their development
+  verification records/objects and the existing named volume. API and Floci remain running.
+- Initial failing runs exposed reserved DynamoDB names (`bucket`, `token`), separate pikepdf
+  PasswordError handling, and versioned upload-fixture teardown. All were corrected; final tests
+  above have no unexpected failures. The exact disposable bucket/table left by that initial
+  teardown were cleaned explicitly, without prefix-wide or development-data deletion.
+
+### Remaining risks and Phase 3 readiness
+The shared core is ready for a thin event adapter, **not an already-integrated production workflow**.
+Phase 3 still needs S3/SQS event decoding, malformed-message policy, batch acknowledgements,
+visibility/lease/receive-count/DLQ alignment and native Linux Lambda packaging/runtime verification.
+The existing SDK-only Lambda probe does not establish Pillow/pikepdf wheel compatibility in the
+official Lambda image; Linux slim container decoding passes, but that is a different runtime.
+
+Validation is not malware scanning or a security sandbox. Default parser limits are 15 seconds,
+20M pixels, 16,384-pixel dimension, 500 PDF pages, 50,000 PDF objects; Linux additionally applies a
+512 MiB child address-space cap and ten-second soft CPU budget. Windows has no POSIX memory/CPU
+cap. Unexpected native crashes remain retryable. Production memory must cover parent plus child.
+Read deadline is cooperative plus SDK timeouts. Workers require synchronized UTC clocks. No lease
+heartbeat/sweeper exists; transient failures wait for same-version expiry recovery. A permanently
+missing selected version cannot switch to a newer upload and may require operator intervention.
+Pre-versioning null objects remain retained but require a fresh upload for processing.
+
+Real AWS IAM/encryption, public API ownership/authentication/quotas, GitHub-hosted runners, hostile
+parser fuzzing, production load/crash durability and the final integrated event chain remain
+unverified. Existing Phase 1 and Milestone 3 security limitations below still apply. See ADR 0003.
+
 ## Milestone 4 Phase 1 — Floci Lambda compatibility gate
 
 Verified locally on Windows Docker Desktop 4.90.0 / Linux-amd64 Docker Engine 29.7.2.

@@ -7,9 +7,9 @@ from unittest.mock import Mock
 import pytest
 from botocore.exceptions import ClientError
 
-ensure_bucket = runpy.run_path(
-    str(Path(__file__).resolve().parents[2] / "infra/local/init_s3.py")
-)["ensure_bucket"]
+ensure_bucket = runpy.run_path(str(Path(__file__).resolve().parents[2] / "infra/local/init_s3.py"))[
+    "ensure_bucket"
+]
 
 
 def existing_client() -> Mock:
@@ -22,10 +22,17 @@ def test_existing_bucket_is_not_recreated_and_privacy_applied() -> None:
     client = existing_client()
     ensure_bucket(client, "test-uploads", "us-east-1")
     client.create_bucket.assert_not_called()
+    client.put_bucket_versioning.assert_called_once_with(
+        Bucket="test-uploads",
+        VersioningConfiguration={"Status": "Enabled"},
+    )
     client.put_public_access_block.assert_called_once_with(
-        Bucket="test-uploads", PublicAccessBlockConfiguration={
-            "BlockPublicAcls": True, "IgnorePublicAcls": True,
-            "BlockPublicPolicy": True, "RestrictPublicBuckets": True,
+        Bucket="test-uploads",
+        PublicAccessBlockConfiguration={
+            "BlockPublicAcls": True,
+            "IgnorePublicAcls": True,
+            "BlockPublicPolicy": True,
+            "RestrictPublicBuckets": True,
         },
     )
     client.put_bucket_ownership_controls.assert_called_once_with(

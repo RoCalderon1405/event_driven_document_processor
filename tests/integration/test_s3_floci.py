@@ -33,7 +33,8 @@ from event_driven_document_processor.modules.documents.infrastructure.s3_upload_
 pytestmark = [
     pytest.mark.floci,
     pytest.mark.skipif(
-        os.getenv("RUN_FLOCI_TESTS") != "1", reason="Set RUN_FLOCI_TESTS=1 for Floci",
+        os.getenv("RUN_FLOCI_TESTS") != "1",
+        reason="Set RUN_FLOCI_TESTS=1 for Floci",
     ),
 ]
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,9 +63,11 @@ def upload_store() -> Iterator[tuple[S3Client, DynamoDBClient, str, str]]:
     finally:
         try:
             if bucket_ready:
-                for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket):
-                    for item in page.get("Contents", []):
-                        s3.delete_object(Bucket=bucket, Key=item["Key"])
+                for page in s3.get_paginator("list_object_versions").paginate(Bucket=bucket):
+                    for item in page.get("Versions", []) + page.get("DeleteMarkers", []):
+                        s3.delete_object(
+                            Bucket=bucket, Key=item["Key"], VersionId=item["VersionId"]
+                        )
                 s3.delete_bucket(Bucket=bucket)
             if table_ready:
                 dynamodb.delete_table(TableName=table)
@@ -78,10 +81,13 @@ def upload_http(upload_store: tuple[S3Client, DynamoDBClient, str, str]) -> Iter
     _, dynamodb, bucket, table = upload_store
     signer_client = create_s3_client(Settings(), public=True)
     app.dependency_overrides[get_document_repository] = lambda: DynamoDBJobRepository(
-        dynamodb, table,
+        dynamodb,
+        table,
     )
     app.dependency_overrides[get_upload_authorizer] = lambda: S3UploadAuthorizer(
-        signer_client, bucket, 300,
+        signer_client,
+        bucket,
+        300,
     )
     try:
         with TestClient(app) as client:
@@ -92,9 +98,14 @@ def upload_http(upload_store: tuple[S3Client, DynamoDBClient, str, str]) -> Iter
 
 
 def issue(client: TestClient, size: int = 4, content_type: str = "application/pdf") -> dict:
-    response = client.post("/api/v1/documents/uploads", json={
-        "filename": "display.pdf", "content_type": content_type, "file_size_bytes": size,
-    })
+    response = client.post(
+        "/api/v1/documents/uploads",
+        json={
+            "filename": "display.pdf",
+            "content_type": content_type,
+            "file_size_bytes": size,
+        },
+    )
     assert response.status_code == 201
     assert response.headers["Cache-Control"] == "no-store"
     return response.json()
@@ -103,9 +114,11 @@ def issue(client: TestClient, size: int = 4, content_type: str = "application/pd
 def post_file(upload: dict, data: bytes = b"test", fields: dict | None = None) -> httpx.Response:
     """Use the returned URL verbatim; let httpx build multipart boundaries and length."""
     return httpx.post(
-        upload["url"], data=upload["fields"] if fields is None else fields,
+        upload["url"],
+        data=upload["fields"] if fields is None else fields,
         files={"file": ("client-name.pdf", data, "application/octet-stream")},
-        timeout=10, trust_env=False,
+        timeout=10,
+        trust_env=False,
     )
 
 
@@ -162,7 +175,8 @@ def test_changed_fields_and_signatures_are_rejected(upload_http: TestClient, fie
 
 
 def test_expired_authorization_rejected(
-    upload_http: TestClient, upload_store: tuple[S3Client, DynamoDBClient, str, str],
+    upload_http: TestClient,
+    upload_store: tuple[S3Client, DynamoDBClient, str, str],
 ) -> None:
     s3, _, bucket, _ = upload_store
     app.dependency_overrides[get_upload_authorizer] = lambda: S3UploadAuthorizer(s3, bucket, 1)
@@ -183,7 +197,8 @@ def test_unsigned_upload_and_anonymous_read_denied(upload_http: TestClient) -> N
 
 
 def test_presigned_post_is_replayable_until_expiry(
-    upload_http: TestClient, upload_store: tuple[S3Client, DynamoDBClient, str, str],
+    upload_http: TestClient,
+    upload_store: tuple[S3Client, DynamoDBClient, str, str],
 ) -> None:
     s3, _, bucket, _ = upload_store
     upload = issue(upload_http)["upload"]
@@ -214,11 +229,13 @@ def test_bucket_security_and_empty_cors(
 
 
 @pytest.mark.xfail(
-    strict=True, raises=AssertionError,
+    strict=True,
+    raises=AssertionError,
     reason="Floci 2.4.0 stores bucket SSE config but omits SSE metadata for POST objects",
 )
 def test_post_object_reports_bucket_default_encryption(
-    upload_http: TestClient, upload_store: tuple[S3Client, DynamoDBClient, str, str],
+    upload_http: TestClient,
+    upload_store: tuple[S3Client, DynamoDBClient, str, str],
 ) -> None:
     """Keep the AWS expectation visible without claiming emulator encryption is verified."""
     s3, _, bucket, _ = upload_store

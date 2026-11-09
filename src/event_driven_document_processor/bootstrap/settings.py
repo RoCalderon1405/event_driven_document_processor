@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,7 +24,9 @@ class Settings(BaseSettings):
     s3_internal_endpoint_url: AnyHttpUrl | None = None
     s3_public_endpoint_url: AnyHttpUrl | None = None
     s3_bucket_name: str = Field(
-        default="document-uploads", min_length=3, max_length=63,
+        default="document-uploads",
+        min_length=3,
+        max_length=63,
         pattern=r"^[a-z0-9][a-z0-9.-]*[a-z0-9]$",
     )
     upload_max_file_size_bytes: int = Field(default=10 * 1024 * 1024, gt=0, le=5 * 1024**3)
@@ -33,6 +35,23 @@ class Settings(BaseSettings):
         Literal["application/pdf", "image/png", "image/jpeg"], ...
     ] = Field(default=("application/pdf", "image/png", "image/jpeg"), min_length=1)
     s3_cors_allowed_origins: tuple[str, ...] = ()
+    processing_max_file_size_bytes: int = Field(default=10 * 1024**2, gt=0, le=100 * 1024**2)
+    processing_lease_seconds: int = Field(default=180, ge=30, le=3600)
+    processing_read_timeout_seconds: float = Field(default=60, gt=0, le=120)
+    processing_validation_timeout_seconds: float = Field(default=15, gt=0, le=60)
+    processing_max_image_pixels: int = Field(default=20_000_000, gt=0, le=40_000_000)
+    processing_max_image_dimension: int = Field(default=16_384, gt=0, le=32_768)
+    processing_max_pdf_pages: int = Field(default=500, gt=0, le=2000)
+    processing_max_pdf_objects: int = Field(default=50_000, gt=0, le=100_000)
+
+    @model_validator(mode="after")
+    def validate_processing_lease(self) -> Settings:
+        """Reject budgets that guarantee expired work even before persistence overhead."""
+        if self.processing_lease_seconds <= (
+            self.processing_read_timeout_seconds + self.processing_validation_timeout_seconds + 10
+        ):
+            raise ValueError("Processing lease must exceed read/validation budgets plus 10 seconds")
+        return self
 
     @field_validator("s3_cors_allowed_origins")
     @classmethod
@@ -41,9 +60,13 @@ class Settings(BaseSettings):
         for origin in origins:
             url = AnyHttpUrl(origin)
             if (
-                "*" in origin or url.username is not None or url.password is not None
-                or url.query is not None or url.fragment is not None
-                or url.path not in {None, "/"} or origin.endswith("/")
+                "*" in origin
+                or url.username is not None
+                or url.password is not None
+                or url.query is not None
+                or url.fragment is not None
+                or url.path not in {None, "/"}
+                or origin.endswith("/")
             ):
                 raise ValueError("CORS requires explicit origins without paths or wildcards")
         return origins

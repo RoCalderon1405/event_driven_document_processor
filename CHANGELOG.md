@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Milestone 4 Phase 2
+
+- Added shared ProcessingService and narrow processing-store, versioned-reader and validator ports;
+  kept HTTP contracts and JobRepository.save/get unchanged. No production event consumer added.
+- Added first-claimed-version selection, unique claim tokens, expiring leases and conditional
+  DynamoDB UpdateItem fencing for same-version recovery and terminal success/permanent failure.
+- Added internal declared lengths and optional backward-compatible processing metadata, SHA-256,
+  bounded streaming/temp-file staging, exact-version S3 reads and sanitized permanent failure codes.
+- Added real PDF/PNG/JPEG validation using maintained pikepdf and Pillow, with child-process
+  deadlines, Linux memory/CPU budgets, image/page/object limits and no malware-free claims.
+- Enabled non-destructive local bucket versioning; adapted disposable upload-fixture cleanup for
+  exact versions. Added separate undeployed processor IAM example and environment policy settings.
+- Added service, adapter, parser and bootstrap unit tests, genuine generated fixtures and isolated
+  Floci race/recovery/version-specific tests. Preserved the Phase 1 compatibility implementation.
+- Documented module connections, retry semantics, limitations and Phase 3 packaging requirements
+  in README and ADR 0003. Actual verification is recorded in PROJECT_STATUS.md.
+
 ## Unreleased — Milestone 3
 
 - Added a compatible create-and-authorize upload endpoint with private, short-lived presigned
