@@ -8,15 +8,20 @@ if GitHub's default branch is renamed, update the push filter too. No paths filt
 
 - **Frontend quality**: independent Ubuntu 24.04 job with Node.js 24, `npm ci` from
   `frontend/package-lock.json`, ESLint, Prettier, Vitest and the production TypeScript/Vite build.
-  All commands run in `frontend/`; any failure fails the job. No shared npm cache or build artifacts.
+  Tests run with V8 coverage (`npm run test:coverage`). All commands run in `frontend/`;
+  any failure fails the job. No shared npm cache or bundled build artifacts.
 - **Python quality**: Ubuntu 24.04, Python 3.14, uv **0.13.6**, `uv sync --locked`, complete offline
-  pytest suite, `ruff check .`, and `ruff format --check .`. Offline emulator-dependent skips are
+  pytest suite with pytest-cov application coverage, `ruff check .`, and `ruff format --check .`.
+  Offline emulator-dependent skips are
   intentional; they are executed explicitly in the Docker job, not counted as integration evidence.
 - **Docker integration**: starts only after quality passes. Validates both fully resolved Compose
   configurations; builds runtime/API, test, native Lambda, event-test and event-bootstrap targets;
   runs unit/integration tests with Floci, the original five compatibility probes, and all nine real
   S3 → SQS → Lambda tests. Native decoders run in the digest-pinned official Lambda Python 3.14 image.
   This job uses Docker images' pinned uv and lockfile, not host dependency installation.
+- **Coveralls reporting**: separate from Docker, waits for Python/frontend quality, downloads their
+  seven-day LCOV artifacts and uploads both in one report. Skipped on fork PRs. See
+  [coverage scope, authorization and badge verification](../../docs/COVERAGE.md).
 - Docker pytest uses `infra.ci.pytest_gate`. **Any skip or new xfail fails the gate**, as do ordinary
   failures, collection errors and empty suites. Only the original strict SSE metadata assertion
   xfail is permitted by exact node ID. Its marker is unchanged: an unexpected pass fails too.
@@ -28,8 +33,9 @@ if GitHub's default branch is renamed, update the push filter too. No paths filt
 
 ## Security and isolation
 
-All four actions are pinned to verified immutable upstream commits (checkout v6, setup-python v6,
-setup-uv v7, setup-node v6). No `pull_request_target`, privileged follow-up workflow, untrusted
+All actions are pinned to verified immutable upstream commits (checkout v6, setup-python v6,
+setup-uv v7, setup-node v6, upload-artifact v7, download-artifact v8 and Coveralls v2).
+No `pull_request_target`, privileged follow-up workflow, untrusted
 expression in a shell,
 secrets, OIDC, package writes, deployment, image push, or shared writable dependency/build cache.
 `contents: read` is the only token permission; checkout does not persist credentials. uv action
@@ -67,7 +73,8 @@ daemon; this runner never performs broad pruning or volume deletion to hide that
 ### Log policy
 
 The frontend job prints ordinary npm/tool output for this repository's offline unit tests; it
-receives no application/registry credentials or real documents and uploads no artifacts. npm audit
+receives no application/registry credentials or real documents. Only LCOV coverage is retained as
+a short-lived artifact; Coveralls also reads referenced source files for reporting. npm audit
 notices do not fail `npm ci`; dependency vulnerability remediation is a separate reviewed change.
 
 Build/test/Compose output goes to a temporary private file and is deleted after each command.
@@ -99,7 +106,7 @@ Frontend reproduction (Node.js 24, from `frontend/`):
 npm ci
 npm run lint
 npm run format:check
-npm test
+npm run test:coverage
 npm run build
 ```
 
@@ -117,7 +124,7 @@ the commit pins with floating tags. Actionlint validation is not a hosted workfl
 
 ## Manual GitHub settings
 
-1. Enable Actions and permit these four upstream actions (or their pinned SHAs) in organization/
+1. Enable Actions and permit the pinned upstream actions in organization/
    repository policy. Keep default workflow permissions **read-only** and PR approval/write grants off.
 2. Require approval for fork workflows, preferably all outside collaborators. Never provide secrets
    to untrusted PR code. Do not switch this job to a self-hosted runner to avoid hosted limits.
@@ -125,7 +132,8 @@ the commit pins with floating tags. Actionlint validation is not a hosted workfl
    **Frontend quality**, **Python quality** and **Docker integration**, pull-request review and
    up-to-date checks as desired.
    Confirm the actual check names in GitHub before saving the rule. Review workflow changes carefully.
-4. No AWS/GHCR token, environment, repository secret, Coveralls setting or deployment configuration.
+4. No AWS/GHCR token, environment, repository secret or deployment configuration.
+   Coveralls requires repository authorization as documented in the coverage guide, not a PAT.
    The workflow does not currently enable merge queues; add a reviewed `merge_group` trigger before
    enabling a queue with required checks.
 

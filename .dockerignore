@@ -8,6 +8,10 @@
 .env.*
 !.env.example
 .coverage
+.coverage.*
+coverage
+htmlcov
+frontend/coverage
 dist
 build
 .ci-state.json

@@ -1,5 +1,72 @@
 # Project status
 
+## Coverage reporting — local collection verified; hosted Coveralls pending
+
+### Changes
+
+- Added development-only `pytest-cov` 7.1.0 / coverage.py 7.17.2 through `uv.lock`, with branch
+  measurement across all `src/` application files. Only static `TYPE_CHECKING` blocks are
+  additionally excluded. The Python quality runner runs the same complete offline suite and
+  now emits `coverage/python.lcov`; isolated Docker test selection/enforcement is unchanged.
+- Added exact-version `@vitest/coverage-v8` 5.1.0 (matching Vitest) and locked dependencies,
+  `npm run test:coverage`, explicit all-source inclusion and LCOV/JSON-summary output. Excluded
+  tests, test setup/helpers and type declarations only; untested App/main remain included.
+- Existing quality jobs save only seven-day LCOV artifacts. A separate **Coveralls reporting**
+  job consumes both current-run artifacts and uploads them together with the official SHA-pinned
+  v2 action, built-in read-only GitHub token and version-pinned/checksum-verified reporter v0.6.22.
+  No parallel finalizer/carry-forward is needed. Fork PRs collect coverage but skip external
+  reporting. Docker still depends on Python quality, never on the Coveralls service job.
+- Added two workflow/quality-runner guards (four total in `test_frontend_ci.py`); updated ignore
+  rules, CI/frontend guides and changelog. New `docs/COVERAGE.md` documents scope, source-data
+  sharing, local reproduction, authorization and hosted acceptance criteria.
+- **No dynamic README badge:** GitHub-hosted upload, repository authorization and correct combined
+  master report are not verified locally. README links to the coverage guide instead.
+
+### Executed checks and actual coverage
+
+- **Passed:** `uv lock`, `uv sync --locked`; direct complete offline coverage run:
+  **258 passed, 57 intentional emulator opt-in skips**. The two added workflow guards account
+  for the increase from 256. Python lines **732/831 = 88.09%**, branches **139/194 = 71.65%**,
+  combined line/branch measurement **84.98%** (terminal rounds to 85%). No threshold was invented.
+- **Passed:** `uv run python infra/ci/run.py quality` (locked sync, Python 3.14, coverage pytest,
+  Ruff lint and full Python formatting); both normal/event Compose config validation commands.
+- **Passed:** frontend locked `npm ci`, **49 tests across 6 suites** with V8 coverage, ESLint,
+  Prettier and TypeScript/Vite production build. Lines **271/300 = 90.33%**, branches
+  **195/234 = 83.33%**, statements **308/352 = 87.50%**, functions **64/74 = 86.48%**.
+  Bundle remains 239.76 kB JS / 19.03 kB CSS. npm still reports the previously reviewed 10 moderate
+  development-tooling findings; no audit fix/breaking upgrades were applied.
+- **Passed:** Actionlint 1.7.12, documentation local-link checks and `git diff --check` (only
+  existing Git LF/CRLF notices). Artifact/Coveralls action pins and inputs were checked upstream.
+- **Passed:** Coveralls reporter v0.6.22 Windows executable SHA-256 checked against the pinned
+  release digest, then a private-output `--dry-run` (no API upload) parsed both LCOVs into one
+  payload: **31 Python + 9 frontend executable files**, all paths resolve, zero-hit source files
+  retained, **1,003/1,131 lines = 88.68%**. Ten additional raw LCOV files contain no executable
+  lines (empty Python package markers / TS types) and are naturally omitted by the reporter.
+  Source/payload content was not published in logs. Initial diagnostic assertions assumed POSIX
+  separators and all 50 raw files; corrected checks match host-native paths and executable files.
+- **Passed:** complete `uv run python infra/ci/run.py docker` after coverage changes:
+  **300 regression passed, zero skips, 1 unchanged strict SSE xfail**;
+  **5 Lambda compatibility passed, zero skips**;
+  **9 real S3/SQS/Lambda events passed, zero skips**.
+  Both isolated configuration checks, runtime/test/native Lambda/event builds and both exact-project
+  cleanup steps passed. These suites remain correctness gates, not part of the coverage numerator.
+- **Passed:** normal `docker compose --profile test run --build --rm tests` (exit 0), followed
+  sequentially by `uv run python infra/local/verify_persistence.py` (exit 0). No verification jobs
+  conflicted and no persistent volumes were deleted. These final checks ran on 2026-11-10.
+
+### Limitations and manual follow-up
+
+- Python percentages measure the offline parent process only: `validation_worker.py` stays at
+  **0%**, since native decoder subprocess execution is not instrumented. Docker/Lambda tests are
+  separate correctness evidence, not merged coverage. Frontend App/main remain at **0%**;
+  jsdom coverage is not browser E2E coverage. No difficult runtime files were hidden.
+- Coveralls authorization, GitHub artifact transport, remote upload/checks and hosted combined
+  results remain **unverified**. An administrator must authorize the repository/organization in
+  Coveralls and permit the pinned Actions, then publish/run the workflow and inspect both language
+  paths and counters. No PAT or production secret is required; read-only workflow permissions stay.
+- Add the dynamic badge only after that hosted verification, following `docs/COVERAGE.md`.
+- No commits, pushes, registry operations or persistent-volume deletion.
+
 ## Frontend Phase 4 — CI and release cleanup
 
 Implemented 2026-11-10 without committing or pushing. Earlier sections are historical records;

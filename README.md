@@ -144,6 +144,7 @@ logs; [project status](docs/PROJECT_STATUS.md) distinguishes local results from 
 - [Frontend](frontend/README.md) — React upload interface, networking/CORS and testing.
 - [Event stack](infra/events/README.md) — real S3/SQS/Lambda setup and verification.
 - [CI guide](infra/ci/README.md) — isolated gates, trust boundaries and GitHub settings.
+- [Coverage](docs/COVERAGE.md) — Python/frontend coverage scope and Coveralls authorization.
 - [Architecture decisions](docs/decisions/) — storage, uploads, processing, events and CI.
 - [Project status](docs/PROJECT_STATUS.md) · [Changelog](CHANGELOG.md) — evidence and milestone history.
 

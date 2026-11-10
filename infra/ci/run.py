@@ -248,7 +248,19 @@ def quality() -> None:
         "Python 3.14",
     )
     command(
-        ["uv", "run", "--no-sync", "pytest", "-q", "--tb=no", "--show-capture=no"], "offline pytest"
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "pytest",
+            "-q",
+            "--tb=no",
+            "--show-capture=no",
+            "--cov",
+            "--cov-report=term-missing",
+            "--cov-report=lcov:coverage/python.lcov",
+        ],
+        "offline pytest with application coverage",
     )
     command(["uv", "run", "--no-sync", "ruff", "check", "."], "Ruff lint")
     command(["uv", "run", "--no-sync", "ruff", "format", "--check", "."], "full formatting")

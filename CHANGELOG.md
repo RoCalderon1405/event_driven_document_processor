@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — Python/frontend coverage and Coveralls
+
+- Added pytest-cov application line/branch coverage and version-matched Vitest V8 coverage,
+  retaining untested runtime source files and excluding only non-runtime/test scaffolding.
+- Collect both LCOV reports in existing CI quality jobs, then combine them with a pinned official
+  Coveralls action in an independent read-only reporting job; preserve isolated Docker gates.
+- Documented scope limitations, artifact retention, fork policy, data sharing and manual GitHub/
+  Coveralls authorization. Dynamic README badge deferred until hosted integration is verified.
+
 ## Unreleased — Frontend Phase 4 (CI and release cleanup)
 
 - Added an independent Node.js 24 frontend CI job: locked npm install, lint, formatting, tests and

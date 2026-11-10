@@ -25,6 +25,7 @@ cd frontend
 npm ci                 # reproducible install from package-lock.json
 npm run dev            # dev server on http://localhost:5173
 npm test               # Vitest + Testing Library (jsdom), no network
+npm run test:coverage  # Same suite with V8 line/branch coverage and LCOV
 npm run lint           # ESLint (flat config, typescript-eslint + react-hooks)
 npm run format:check   # Prettier verification
 npm run build          # tsc -b type-check + production bundle

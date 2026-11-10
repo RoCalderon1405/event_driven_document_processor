@@ -36,9 +36,16 @@ jobs:
       - name: Formatting
         run: npm run format:check
       - name: Tests
-        run: npm test
+        run: npm run test:coverage
       - name: Production build
         run: npm run build
+      - name: Save frontend coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-frontend
+          path: frontend/coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 7
 
   quality:
     name: Python quality
@@ -58,6 +65,37 @@ jobs:
       - name: Locked dependencies, tests, lint and formatting
         run: python infra/ci/run.py quality
         timeout-minutes: 8
+      - name: Save Python coverage
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-python
+          path: coverage/python.lcov
+          if-no-files-found: error
+          retention-days: 7
+
+  coveralls:
+    name: Coveralls reporting
+    needs: [quality, frontend]
+    # Forks still generate reports, but never send their source/coverage to a third party.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+      - name: Report Python and frontend coverage together
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2
+        with:
+          github-token: ${{ github.token }}
+          files: coverage/python.lcov coverage/lcov.info
+          format: lcov
+          coverage-reporter-version: v0.6.22
 
   docker:
     name: Docker integration
