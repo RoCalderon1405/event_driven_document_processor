@@ -86,7 +86,13 @@ def provision(
         clients[name] for name in ("s3", "sqs", "dynamodb", "lambda", "iam")
     )
     ensure_table(ddb, settings.dynamodb_table_name)
-    ensure_bucket(s3, settings.s3_bucket_name, settings.aws_default_region)
+    # Reconcile browser CORS too: a later bootstrap must not silently drop configured origins.
+    ensure_bucket(
+        s3,
+        settings.s3_bucket_name,
+        settings.aws_default_region,
+        settings.s3_cors_allowed_origins,
+    )
     dlq_url = sqs.create_queue(QueueName=settings.processing_dlq_name)["QueueUrl"]
     dlq_attributes = sqs.get_queue_attributes(QueueUrl=dlq_url, AttributeNames=["All"])[
         "Attributes"

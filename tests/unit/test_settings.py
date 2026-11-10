@@ -35,6 +35,25 @@ def test_invalid_settings(field: str, value: object) -> None:
         Settings(**{field: value})
 
 
+def test_api_cors_defaults_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Browser API access stays disabled unless explicit origins are configured."""
+    # Compare against library defaults, never against Compose or exported shell origins.
+    monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("S3_CORS_ALLOWED_ORIGINS", raising=False)
+    assert Settings().cors_allowed_origins == ()
+    configured = Settings(cors_allowed_origins=("http://localhost:5173",))
+    assert configured.cors_allowed_origins == ("http://localhost:5173",)
+
+
+@pytest.mark.parametrize(
+    "origins",
+    [("*",), ("http://localhost:5173/",), ("http://user:pass@localhost:5173",)],
+)
+def test_api_cors_rejects_wildcard_or_degenerate_origins(origins: tuple[str, ...]) -> None:
+    with pytest.raises(ValidationError):
+        Settings(cors_allowed_origins=origins)
+
+
 def test_client_has_bounded_sdk_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")

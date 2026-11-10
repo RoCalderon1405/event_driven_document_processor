@@ -16,3 +16,6 @@ wheels/
 !.env.example
 .mypy_cache/
 .ci-state.json
+
+# Frontend dependencies (build output is covered by dist/ above)
+node_modules/

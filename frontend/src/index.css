@@ -1,0 +1,13 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Platform font stack: no webfont download and consistent native rendering. */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-50 font-sans text-slate-900 antialiased;
+  }
+}

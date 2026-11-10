@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — React frontend Phase 2
+
+- Added a Recent Documents section polling `GET /api/v1/documents/{job_id}` on one shared 2 s
+  interval: all five backend statuses render distinctly, and polling stops on terminal
+  COMPLETED/FAILED/DUPLICATE (mirroring `ALREADY_TERMINAL`) or on a 404 response.
+- Persisted tracked job IDs in versioned, corruption-tolerant localStorage (newest first, capped)
+  so tracking resumes after refresh; failures back off 2→15 s, pause after 5 attempts with manual
+  Retry, and Remove cleans entry plus stored id.
+- Added transition-only screen-reader announcements, an `onUploaded` upload handoff, layout polish
+  around the new section and 24 focused tests (43 total). No backend contract, result fields, CI or
+  GHCR changes.
+
+## Unreleased — React frontend Phase 1
+
+- Added a minimal React 19 + TypeScript + Vite + Tailwind CSS v4 single-page client in `frontend/`,
+  organized as `features/documents/`: responsive drag-and-drop upload, client-side validation, real
+  XHR progress and direct-to-storage presigned POST delivery through the unchanged API contract.
+- Added opt-in API CORS (`CORS_ALLOWED_ORIGINS`, default closed) sharing the existing wildcard/path/
+  credential origin validation, and reconciled `S3_CORS_ALLOWED_ORIGINS` through the event bootstrap;
+  both compose files default to the local Vite origin for browser development only.
+- Added 19 focused Vitest/Testing Library tests, ESLint/Prettier configuration and production build
+  verification. No router, state library, job polling or hosted frontend CI yet; no commits.
+
 ## Unreleased — GHCR continuous delivery
 
 - Added canonical SemVer tag releases that reuse the complete existing CI workflow before publishing.

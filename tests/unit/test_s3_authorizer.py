@@ -92,7 +92,9 @@ def test_cors_rejects_wildcard_or_non_origin(origins: tuple[str, ...]) -> None:
         Settings(s3_cors_allowed_origins=origins)
 
 
-def test_cors_defaults_closed() -> None:
+def test_cors_defaults_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Compare against library defaults, never against Compose or exported shell origins.
+    monkeypatch.delenv("S3_CORS_ALLOWED_ORIGINS", raising=False)
     assert Settings().s3_cors_allowed_origins == ()
     assert Settings(s3_cors_allowed_origins=("http://localhost:3000",)).s3_cors_allowed_origins
 

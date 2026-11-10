@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     aws_read_timeout: float = Field(default=3.0, gt=0, le=30)
     aws_max_attempts: int = Field(default=3, ge=1, le=5)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    # Browser origins allowed to call this API; empty keeps cross-origin access closed.
+    cors_allowed_origins: tuple[str, ...] = ()
     s3_internal_endpoint_url: AnyHttpUrl | None = None
     s3_public_endpoint_url: AnyHttpUrl | None = None
     s3_bucket_name: str = Field(
@@ -53,7 +55,7 @@ class Settings(BaseSettings):
             raise ValueError("Processing lease must exceed read/validation budgets plus 10 seconds")
         return self
 
-    @field_validator("s3_cors_allowed_origins")
+    @field_validator("cors_allowed_origins", "s3_cors_allowed_origins")
     @classmethod
     def validate_cors_origins(cls, origins: tuple[str, ...]) -> tuple[str, ...]:
         """Allow only explicit HTTP(S) origins, never a wildcard or URL with credentials."""

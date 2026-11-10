@@ -45,6 +45,12 @@ This project focuses on those backend engineering problems:
 ![Lambda](https://img.shields.io/badge/Lambda-Python_runtime-FF9900?style=flat-square)
 ![DynamoDB](https://img.shields.io/badge/DynamoDB-job_state-4053D6?style=flat-square)
 
+**Frontend**<br>
+![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)
+
 **Local tooling & quality**<br>
 ![Docker](https://img.shields.io/badge/Docker_Compose-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![Floci](https://img.shields.io/badge/Floci-2.4.0-334155?style=flat-square)
@@ -75,6 +81,9 @@ See the [design decisions](docs/decisions/) for concurrency and security tradeof
 ## Core features
 
 - **Private direct uploads:** short-lived POST policies bind object key, declared MIME type and size.
+- **Browser upload client:** a minimal React single-page interface with drag-and-drop, client-side
+  validation, real presigned-POST progress and live job-status tracking
+  ([frontend guide](frontend/README.md)).
 - **Version-fenced processing:** exact-version reads, bounded streaming and SHA-256 hashing.
 - **Real content validation:** malformed or mismatched documents become `FAILED`, not false successes.
 - **Resilient event delivery:** nested-record handling, partial batch failures, retries and a DLQ.
@@ -104,6 +113,11 @@ The default stack uses dummy credentials and retains local data in a named volum
 **Want the full event pipeline?** Follow the [event-stack guide](infra/events/README.md): it runs
 separately on API **8001** / gateway **4567**. Only its trusted emulator receives the Docker socket.
 
+**Prefer a browser?** Start the API, then run `cd frontend && npm ci && npm run dev` and open
+**[localhost:5173](http://localhost:5173)**. The client uploads through the presigned flow above and
+tracks live processing status until completion; see the [frontend guide](frontend/README.md) for
+commands and CORS details.
+
 Configuration, upload examples, host development and persistence checks live in the
 [development guide](docs/DEVELOPMENT.md). Stop normally with `docker compose stop`; do not delete
 volumes unless you intentionally want to lose local data.
@@ -116,7 +130,7 @@ uv run python infra/ci/run.py quality  # Offline pytest, Ruff lint and full form
 uv run python infra/ci/run.py docker   # Isolated builds, Floci, compatibility and event tests
 ```
 
-**Recorded local evidence:** 327 isolated regression passes, 5 Lambda compatibility passes and
+**Recorded local evidence:** 331 isolated regression passes, 5 Lambda compatibility passes and
 9 real event-chain passes. One strict SSE-metadata xfail records a Floci limitation; it is not proof
 of encryption at rest. Offline runs intentionally skip emulator-dependent tests.
 
@@ -127,6 +141,7 @@ logs; [project status](docs/PROJECT_STATUS.md) distinguishes local results from 
 ## Documentation links
 
 - [Development guide](docs/DEVELOPMENT.md) — setup, configuration, API examples and processing details.
+- [Frontend](frontend/README.md) — React upload interface, networking/CORS and testing.
 - [Event stack](infra/events/README.md) — real S3/SQS/Lambda setup and verification.
 - [CI guide](infra/ci/README.md) — isolated gates, trust boundaries and GitHub settings.
 - [Release guide](infra/release/README.md) — version tags, GHCR digests and publication safeguards.

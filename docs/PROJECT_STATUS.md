@@ -1,5 +1,161 @@
 # Project status
 
+## Frontend Phase 2 — document tracking (Recent Documents)
+
+Completed 2026-11-09. No commits; nothing pushed; default branch `master`.
+
+### Scope
+
+Added live processing-status tracking to the existing React client:
+
+- `frontend/src/features/documents/tracking.ts` — pure rules: terminal-status set mirroring
+  `ProcessingOutcome.ALREADY_TERMINAL` (`COMPLETED`, `FAILED`, `DUPLICATE`), status labels,
+  backoff schedule, defensive localStorage persistence (`eddp.tracked-jobs.v1`, newest first,
+  capped at 20, corrupt/duplicate entries dropped).
+- `frontend/src/features/documents/useDocumentTracker.ts` — one shared 2 s interval polls
+  `GET /api/v1/documents/{job_id}` for every active job; polls stop on terminal statuses and on
+  404 ("Not found" state, entry kept); failures back off 2 → 4 → 8 → 15 s and pause after 5
+  consecutive errors with a manual Retry; timers clear themselves when nothing is active and on
+  unmount; in-flight requests are deduplicated per job and aborted on teardown.
+- `frontend/src/features/documents/RecentDocuments.tsx` — list with distinct badges for all five
+  backend statuses plus Connecting…/Not found, per-entry failure explanations, accessible
+  Retry/Remove controls, and one sr-only `role="status"` live region that announces real status
+  transitions only (never each poll cycle).
+- `frontend/src/features/documents/api.ts` — added `getJob` (`cache: 'no-store'`, fixed 404
+  detail surfaced as `ApiError`).
+- `useUpload.ts` / `UploadCard.tsx` — `onUploaded(job)` handoff fires exactly once after the
+  storage 2xx so the new job appears in Recent Documents immediately.
+- `App.tsx` — composes the tracker with an always-visible Recent Documents section under the
+  upload card; stale Phase-1 copy removed. Layout otherwise unchanged.
+- Tests: new `tracking.test.ts`, `useDocumentTracker.test.ts`, `RecentDocuments.test.tsx`;
+  `api.test.ts` and `UploadCard.test.tsx` extended.
+
+**No backend, schema, CI, GHCR, or processing-result changes** — the phase reuses the existing
+`DocumentJobResponse` contract unchanged.
+
+### Verification (all executed 2026-11-09)
+
+| Check | Result | Status |
+| --- | --- | --- |
+| `npm test` | **43 passed (6 files)** — 19 existing + 24 new | passed |
+| `npm run lint` (eslint) | clean | passed |
+| `npm run format:check` (prettier) | clean | passed |
+| `npm run build` (tsc + vite) | OK — 237.97 kB JS / 18.87 kB CSS (gzip 74.47 / 4.74 kB) | passed |
+| `uv run python infra/ci/run.py quality` | **5/5 PASS** (sync, Python 3.14, offline pytest, ruff, format) | passed |
+| `uv run pytest -q` | **289 passed, 57 skipped** | passed |
+| `uv run ruff check .` | All checks passed | passed |
+| `docker compose config --quiet` | OK | passed |
+| `docker compose -p eddp-lambda-probe -f compose.lambda.yaml --profile processing config --quiet` | OK | passed |
+| `docker compose --profile test run --build --rm tests` | **331 passed, 14 skipped, 1 xfailed** (346 collected; strict-SSE xfail unchanged) | passed |
+| `uv run python infra/local/verify_persistence.py` | **PASS** — job persisted across API restart and Floci container recreation; `lambda-data` volume retained | passed |
+| Full-flow probe (event stack, ports 8001/4567) | Unknown job → **404** `Document job not found` + `Access-Control-Allow-Origin: http://localhost:5173`; valid pikepdf PDF (authorize 201 → storage 204) → **`['PENDING', 'PROCESSING', 'COMPLETED']`** after 5 polls / 8.1 s, terminal stable on re-read; invalid 8-byte PDF → **`['PENDING', 'FAILED']`** after 2 polls / 2.0 s, stable; script ended `EVENT FLOW VERIFICATION OK` | passed |
+| Browser / human interaction | not executed (no real browser session) | skipped |
+| GHCR-hosted release | not touched this phase | not in scope |
+
+Execution notes (honesty record):
+
+- The **first** Docker test-suite attempt failed before running tests with
+  `Error response from daemon: No such container: 30f7fe9194e8…` — an orchestration collision
+  caused by running `verify_persistence.py` (which restarts default-project containers)
+  concurrently with the suite's dependency wait. Re-run alone: 331 passed / 14 skipped / 1 xfailed.
+- The event-stack probe observed a real `PROCESSING` transition (not just PENDING → terminal),
+  confirming the tracker's non-terminal polling path against live data.
+- `DUPLICATE` is covered by unit/component tests but cannot be produced locally until backend
+  deduplication exists.
+
+### Remaining limitations
+
+- No real-browser or human-interaction verification; jsdom tests only (including localStorage
+  resume, which uses the environment's storage mock).
+- Tracking history is per-browser (localStorage) only — another browser or machine sees no
+  history; there is no server-side job list to restore from.
+- No processing-result fields, history view, authentication, CI, or GHCR changes (out of scope).
+- One shared 2 s interval for all jobs; very large tracked lists would benefit from staggered
+  scheduling.
+
+## Frontend Phase 1 — React upload interface
+
+### Scope and files
+
+- New `frontend/` single-page client (25 files including `package-lock.json`): React 19.3,
+  TypeScript ~6.0.3, Vite 8.3, Tailwind CSS 4.3, ESLint flat config (typescript-eslint +
+  react-hooks), Prettier, Vitest 5 + Testing Library (jsdom). No router, Redux, React Query, MSW or
+  zod — plain `fetch` plus one `XMLHttpRequest` state machine. `node_modules`/`dist` stay ignored.
+- `src/features/documents/`: `types.ts` mirrors the Pydantic response schemas; `api.ts` posts exactly
+  `{filename, content_type, file_size_bytes}` to `POST /api/v1/documents/uploads`; `validation.ts`
+  mirrors type/size/name limits; `useUpload.ts` runs validate → authorize → direct-to-storage XHR
+  progress (file part last, abort on unmount); `UploadCard.tsx` provides drag-and-drop, a
+  `role="progressbar"` with `aria-valuenow`, `status`/`alert` live regions and focus restoration.
+  Existing endpoints, schemas, UUIDs and `file_name` compatibility are unchanged.
+- Essential backend changes only: new `cors_allowed_origins` setting (default closed) sharing the
+  existing validator that rejects wildcard/path/credential origins; conditional `CORSMiddleware` in
+  `main.py` (GET/POST, Content-Type) that is absent when no origins are configured, preserving prior
+  behavior for tests and non-browser clients; `infra/events/bootstrap.py` now forwards
+  `s3_cors_allowed_origins` to `ensure_bucket` so re-bootstraps cannot drop bucket CORS;
+  `compose.yaml`/`compose.lambda.yaml` default both CORS settings to `["http://localhost:5173"]`;
+  `.env.example` documents `CORS_ALLOWED_ORIGINS`. Four new settings tests cover the new default and
+  origin rejection. The Vite dev proxy keeps `/api` same-origin; optional `VITE_API_BASE_URL`
+  bypasses it to exercise the middleware.
+- Documentation/ignore updates: `frontend/README.md`, root README quick-start/tech-stack/feature/
+  link entries, CHANGELOG section, `.gitignore` `node_modules/`, `.dockerignore`
+  `frontend/node_modules` + `frontend/dist`.
+
+### Actual checks
+
+- Quality runner (`uv run python infra/ci/run.py quality`, after the backend CORS changes): locked
+  dependency sync, Python 3.14, offline pytest, Ruff lint and full formatting all **PASS**. After the
+  later test-hermeticity fix: `uv run pytest -q` → **289 passed, 57 skipped**; `ruff check .` and
+  `ruff format --check .` clean (102 files). `docker compose config --quiet` passes for `compose.yaml`
+  and for `compose.lambda.yaml` with `--profile processing`.
+- Frontend gates (final run): `npm run lint` clean, `npm run format:check` clean, `npm test` →
+  **19/19 passed** (3 files), `npm run build` (`tsc -b` + vite) → 230.02 kB JS / 16.16 kB CSS
+  (gzip 72.12 / 4.13 kB).
+- First `docker compose --profile test run --build --rm tests` → **2 failed, 329 passed, 14 skipped,
+  1 xfailed**: the new Compose CORS defaults became ambient environment inside the test container, so
+  the "defaults closed" assertions (`test_cors_defaults_closed`,
+  `test_api_cors_defaults_closed`) observed `http://localhost:5173`. Both tests were made hermetic
+  with `monkeypatch.delenv` (they now compare against library defaults regardless of exported shell
+  or Compose origins); re-run → **331 passed, 14 skipped, 1 xfailed** (346 collected; the strict SSE
+  xfail is unchanged).
+- Normal stack (8000/4566), browser-style HTTP checks: plain `docker compose up -d` initially ran
+  the stale pre-change API image → preflight **405** with no CORS headers (gotcha recorded: `--build`
+  is required after `main.py` changes); after `up -d --build` the container reported
+  `cors_allowed_origins=('http://localhost:5173',)` and `['CORSMiddleware']`. API preflight **200**
+  (allow-methods GET, POST; allow-headers include content-type; ACAO `http://localhost:5173`), GET
+  and POST responses carry ACAO, a foreign origin receives no ACAO and preflight **400**. Floci S3
+  preflight **200** and a real presigned POST **204**, both with ACAO.
+- Vite dev server: root **200**; `/api` proxy returns the upstream uvicorn JSON; the corrected full
+  UI path (authorize via proxy **201** → storage POST with `Origin`, declared size = actual 8 bytes
+  → **204**, both with ACAO) succeeded; the dev server was stopped afterwards (port 5173 released).
+- One storage **400 `EntityTooLarge`** was diagnosed as a byte-count bug in my verification script
+  (declared 7 vs actual 8 bytes): Floci enforced the exact signed `content-length-range` policy. The
+  UI always sends the real `file.size`, so this mismatch cannot occur in the client.
+- Event stack (`compose.lambda.yaml`, 8001/4567): the event bootstrap reconciled bucket CORS to
+  `['http://localhost:5173'] POST content-type`; API preflight **200** + ACAO; S3 preflight **200**
+  and presigned POST **204** + ACAO; an invalid 8-byte PDF reached **FAILED** through the validator
+  and a valid 537-byte pikepdf PDF reached **COMPLETED** (full S3 → SQS → Lambda → DynamoDB chain).
+  The stack was stopped afterwards; the `lambda-data` volume was retained.
+- `uv run python infra/local/verify_persistence.py` → **PASS** ("job persisted across API restart and
+  Floci container recreation"); the dev bucket CORS was re-confirmed afterwards as
+  `['http://localhost:5173'] POST content-type`.
+- Isolated CI gate (`uv run python infra/ci/run.py docker`) → every step **PASS**: Compose version
+  and resolution (normal + event overlays), runtime/test images, native Lambda and event images,
+  Floci regression **331 passed, 0 failed, 0 errors, 0 skipped, 1 xfailed**, Lambda compatibility
+  **5 passed**, real S3/SQS/Lambda events **9 passed**, and both cleanup steps.
+- Git hygiene: `git diff --check` clean; nothing staged, committed or pushed; `git status` shows the
+  modified project files plus untracked `frontend/`, with `node_modules`/`dist` confirmed ignored via
+  `git check-ignore`.
+
+### Remaining limits
+
+- No real browser or human interaction was performed: CORS, progress and upload behavior were
+  verified with protocol-level HTTP checks (preflight and actual requests carrying `Origin`) and
+  jsdom component tests, not a human-driven browser session.
+- Job polling, processing-result views and a hosted frontend CI job are out of this phase's scope;
+  the frontend is not covered by any workflow yet and `npm ci` was not run inside Docker.
+- The 10 MiB client limit mirrors the backend default and is not yet advertised by an API endpoint.
+- Hosted preview/publishing remains unverified, as before.
+
 ## GHCR continuous delivery — implemented, hosted publication unverified
 
 ### Scope and files
