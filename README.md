@@ -74,6 +74,8 @@ flowchart LR
     Core -->|Conditional result| DB
 ```
 
+[![Coverage Status](https://coveralls.io/repos/github/RoCalderon1405/event_driven_document_processor/badge.svg?branch=master)](https://coveralls.io/github/RoCalderon1405/event_driven_document_processor?branch=master)
+
 **Clean Architecture:** API/event adapters → application → domain; infrastructure implements ports,
 with concrete dependencies wired in `bootstrap/`. The first successfully claimed S3 version wins.
 See the [design decisions](docs/decisions/) for concurrency and security tradeoffs.
