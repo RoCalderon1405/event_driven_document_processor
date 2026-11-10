@@ -25,6 +25,27 @@ Upload documents, track their status, and inspect validation results through an 
 
 Its React interface supports drag-and-drop uploads, progress indicators, job tracking, and processing metadata. The system is implemented and tested locally using **Floci**; it is **not deployed to AWS**.
 
+## Application screenshots
+
+Real Playwright captures of the local application, using a generated test PDF with no personal data.
+
+### Document upload
+
+![Desktop document upload interface with a file dropzone and an empty Recent Documents section](docs/assets/screenshots/document-upload-desktop.png)
+
+### Completed processing
+
+The same test PDF after the real S3 → SQS → Lambda → DynamoDB flow, with its SHA-256,
+processed size, timing and validation result.
+
+![Completed PDF with upload confirmation and processing results in Recent Documents](docs/assets/screenshots/document-results-desktop.png)
+
+### Responsive mobile layout
+
+The upload form and completed document at a 390 px viewport; the full SHA-256 wraps within the card.
+
+<img src="docs/assets/screenshots/document-mobile.png" alt="Mobile document upload and completed processing results in a single-column layout" width="320">
+
 ## Why this project matters
 
 Uploading a file is straightforward. Correctly handling **duplicate notifications, overwritten objects, retries, and worker failures** is harder.

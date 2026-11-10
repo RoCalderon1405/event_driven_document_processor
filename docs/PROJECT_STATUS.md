@@ -1,5 +1,51 @@
 # Project status
 
+## Real application screenshots — Playwright browser capture
+
+Captured 2026-11-10 from the existing application without backend or frontend source changes.
+
+- Playwright MCP was available and used for browser navigation, the visible file chooser,
+  waiting for completion, viewport changes and real full-page PNG captures. A fresh browser
+  history showed no tracked documents initially; no personal files or browser history were used.
+- Started the documented event stack (`eddp-lambda-probe`, ports 8001/4567) with `--build` and the
+  existing Vite frontend with locked `npm ci` / `npm run dev`. Its existing proxy already targeted
+  port 8001. The previously running standard API/storage stack was not reconfigured.
+- Generated a one-page, 915-byte synthetic `demo-report.pdf` locally with pikepdf and uploaded it
+  through the browser's file picker. The real event chain reached `COMPLETED` and the UI displayed
+  **Format validation passed**. An independent GET confirmed the stored processed size and SHA-256
+  exactly matched the generated PDF; no responses, processing state or DOM content were fabricated.
+- Added `docs/assets/screenshots/document-upload-desktop.png` (**1440 × 1100**),
+  `document-results-desktop.png` (**1440 × 1209**) and `document-mobile.png` (**390 × 1308**).
+  Desktop viewport: 1440 × 1100; mobile-width viewport: 390 × 844. Full-page capture dimensions
+  extend beyond the viewport as needed. The mobile image shows the upload form plus the real
+  completed job after choosing **Upload another file**.
+- README now embeds all three images with descriptive alternative text and captions. Added
+  `docs/assets/screenshots/README.md` for capture provenance and reproduction details. Generated
+  fixture/Markdown preview files remain under ignored `build/`, not in the documentation assets.
+
+### Verification
+
+- **Passed:** visual inspection of each actual screenshot; PNG decoding/dimensions, all three
+  relative image paths, and real backend digest/size comparison. No image editing or retouching.
+- **Passed:** application mobile-width layout had `scrollWidth == innerWidth == 390`, with loaded
+  fonts and the digest wrapping inside its card. This is viewport responsiveness, not a physical
+  mobile-device/touch test.
+- **Passed:** the exact README screenshot section was rendered locally with Markdown parsing and
+  browser-inspected with GitHub-like responsive styling. All three images loaded, desktop/mobile
+  previews had no horizontal page overflow, and captions/alternative text rendered as intended.
+  GitHub's hosted renderer was not accessed; no hosted-rendering claim is made.
+- Browser console: one pre-existing **`/favicon.ico` 404**, no application errors observed during
+  upload/completion. The first automation click targeted the hidden file input and timed out;
+  clicking the visible browse label opened the chooser and the real upload then succeeded.
+- **Passed:** `git diff --check` (only existing LF/CRLF notices). Full Python/frontend/Docker
+  regression suites were **not rerun** for this documentation/image-only change; earlier results
+  remain historical. No commits, pushes or volume deletion.
+- Capture-only Vite and Markdown preview servers were stopped, the Playwright tab was closed,
+  and the event API/emulator were stopped using the documented safe command. All event data and
+  volumes were retained; the already-running standard stack was left alone. Generated browser
+  snapshots/console logs were moved into ignored `build/readme-preview/browser-logs/`. The user's
+  pre-existing untracked `opencode.json` was not changed.
+
 ## Coverage reporting — local collection verified; hosted Coveralls pending
 
 ### Changes
