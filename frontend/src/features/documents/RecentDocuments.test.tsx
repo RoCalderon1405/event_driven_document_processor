@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { RecentDocuments } from './RecentDocuments';
 import type { TrackedEntry } from './useDocumentTracker';
-import type { DocumentJob, DocumentStatus } from './types';
+import type { DocumentJob, DocumentStatus, ProcessingResult } from './types';
 
 const JOB_ID = '6f1d8c2e-0a4b-4c5d-9e8f-0a1b2c3d4e5f';
 
@@ -14,6 +14,7 @@ interface EntryOptions {
   missing?: boolean;
   paused?: boolean;
   message?: string | null;
+  processing?: ProcessingResult | null;
 }
 
 function makeEntry(options: EntryOptions = {}): TrackedEntry {
@@ -24,6 +25,7 @@ function makeEntry(options: EntryOptions = {}): TrackedEntry {
     missing = false,
     paused = false,
     message = null,
+    processing = null,
   } = options;
   const lastJob: DocumentJob | null =
     status === null
@@ -35,6 +37,7 @@ function makeEntry(options: EntryOptions = {}): TrackedEntry {
           description: null,
           status,
           created_at: '2026-11-09T12:00:00Z',
+          processing,
         };
   return {
     tracked: { job_id: jobId, filename, added_at: Date.UTC(2026, 10, 9, 12, 0) },
@@ -127,5 +130,65 @@ describe('RecentDocuments', () => {
     const liveRegion = screen.getByRole('status');
     expect(liveRegion).toHaveAttribute('aria-live', 'polite');
     expect(liveRegion).toHaveTextContent('report.pdf is now Completed.');
+  });
+
+  it('shows completion results: digest, size, timing and validation', () => {
+    renderRecent([
+      makeEntry({
+        status: 'COMPLETED',
+        processing: {
+          started_at: '2026-11-09T12:00:00Z',
+          finished_at: '2026-11-09T12:00:03Z',
+          sha256: 'a'.repeat(64),
+          size_bytes: 2048,
+          failure_code: null,
+        },
+      }),
+    ]);
+
+    expect(screen.getByText('a'.repeat(64))).toBeInTheDocument();
+    expect(screen.getByText('2.0 KB')).toBeInTheDocument();
+    expect(screen.getByText('Format validation passed')).toBeInTheDocument();
+    expect(screen.getByText('Finished')).toBeInTheDocument();
+    expect(screen.getByText(/took 3\.0 s/)).toBeInTheDocument();
+  });
+
+  it('explains a failed job through its failure reason without completion facts', () => {
+    renderRecent([
+      makeEntry({
+        status: 'FAILED',
+        processing: {
+          started_at: '2026-11-09T12:00:00Z',
+          finished_at: '2026-11-09T12:00:01Z',
+          sha256: null,
+          size_bytes: null,
+          failure_code: 'INVALID_FORMAT',
+        },
+      }),
+    ]);
+
+    expect(screen.getByText('Reason')).toBeInTheDocument();
+    expect(screen.getByText(/could not be parsed as a valid document/)).toBeInTheDocument();
+    expect(screen.queryByText('Format validation passed')).not.toBeInTheDocument();
+    expect(screen.queryByText('SHA-256')).not.toBeInTheDocument();
+    expect(screen.queryByText('Processed size')).not.toBeInTheDocument();
+  });
+
+  it('shows no processing details until an attempt records a finish time', () => {
+    renderRecent([
+      makeEntry({
+        status: 'PROCESSING',
+        processing: {
+          started_at: '2026-11-09T12:00:00Z',
+          finished_at: null,
+          sha256: null,
+          size_bytes: null,
+          failure_code: null,
+        },
+      }),
+    ]);
+
+    expect(screen.queryByText('Finished')).not.toBeInTheDocument();
+    expect(screen.queryByText('SHA-256')).not.toBeInTheDocument();
   });
 });

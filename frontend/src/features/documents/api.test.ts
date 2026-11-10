@@ -102,7 +102,17 @@ describe('createUpload', () => {
 
 describe('getJob', () => {
   it('fetches the exact job URL uncached and parses the job response', async () => {
-    const job: DocumentJob = { ...AUTHORIZATION.job, status: 'PROCESSING' };
+    const job: DocumentJob = {
+      ...AUTHORIZATION.job,
+      status: 'COMPLETED',
+      processing: {
+        started_at: '2026-11-09T12:00:00Z',
+        finished_at: '2026-11-09T12:00:03Z',
+        sha256: 'b'.repeat(64),
+        size_bytes: 1024,
+        failure_code: null,
+      },
+    };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -113,6 +123,7 @@ describe('getJob', () => {
     const result = await getJob(JOB_ID);
 
     expect(result).toEqual(job);
+    expect(result.processing?.sha256).toBe('b'.repeat(64));
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`/api/v1/documents/${JOB_ID}`);
     expect(init.method).toBe('GET');

@@ -82,14 +82,14 @@ See the [design decisions](docs/decisions/) for concurrency and security tradeof
 
 - **Private direct uploads:** short-lived POST policies bind object key, declared MIME type and size.
 - **Browser upload client:** a minimal React single-page interface with drag-and-drop, client-side
-  validation, real presigned-POST progress and live job-status tracking
+  validation, real presigned-POST progress, live job-status tracking and processing results
   ([frontend guide](frontend/README.md)).
 - **Version-fenced processing:** exact-version reads, bounded streaming and SHA-256 hashing.
 - **Real content validation:** malformed or mismatched documents become `FAILED`, not false successes.
 - **Resilient event delivery:** nested-record handling, partial batch failures, retries and a DLQ.
 - **Persistent local jobs:** DynamoDB adapter, repeatable bootstrap and backward-compatible API contracts.
 - **Isolated CI gates:** locked dependencies, lint/format checks, Docker builds and real event tests.
-- **Tag-driven delivery:** reuse CI before publishing the production API image to GHCR.
+- **Frontend quality gates:** locked npm install, lint, formatting, tests and production build in CI.
 
 > **Development only:** the API has no authentication, ownership checks, quotas or rate limits.
 > Keep it local. Format validation is not malware scanning; production security remains future work.
@@ -144,7 +144,6 @@ logs; [project status](docs/PROJECT_STATUS.md) distinguishes local results from 
 - [Frontend](frontend/README.md) — React upload interface, networking/CORS and testing.
 - [Event stack](infra/events/README.md) — real S3/SQS/Lambda setup and verification.
 - [CI guide](infra/ci/README.md) — isolated gates, trust boundaries and GitHub settings.
-- [Release guide](infra/release/README.md) — version tags, GHCR digests and publication safeguards.
 - [Architecture decisions](docs/decisions/) — storage, uploads, processing, events and CI.
 - [Project status](docs/PROJECT_STATUS.md) · [Changelog](CHANGELOG.md) — evidence and milestone history.
 

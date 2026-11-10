@@ -1,4 +1,5 @@
-import { formatTimestamp, isTerminalStatus } from './tracking';
+import { failureMessage, formatDuration, formatTimestamp, isTerminalStatus } from './tracking';
+import { formatFileSize } from './validation';
 import type { TrackedEntry } from './useDocumentTracker';
 import type { DocumentStatus } from './types';
 
@@ -92,6 +93,11 @@ export function RecentDocuments({
               !runtime.paused &&
               (!runtime.lastJob || !isTerminalStatus(runtime.lastJob.status));
             const canRetry = runtime.paused || runtime.missing;
+            // Processing results render only once an attempt has recorded a finish time.
+            const results = runtime.lastJob?.processing;
+            const finishedMs = results?.finished_at ? Date.parse(results.finished_at) : NaN;
+            const startedMs = results ? Date.parse(results.started_at) : NaN;
+            const took = finishedMs - startedMs;
             return (
               <li
                 key={tracked.job_id}
@@ -116,6 +122,40 @@ export function RecentDocuments({
                 </div>
 
                 {runtime.message && <p className="mt-2 text-xs text-red-600">{runtime.message}</p>}
+
+                {results && Number.isFinite(finishedMs) && (
+                  <dl className="mt-2 grid gap-x-3 gap-y-1 text-xs text-slate-500 sm:grid-cols-[7.5rem_1fr]">
+                    <dt className="text-slate-400">Finished</dt>
+                    <dd>
+                      {formatTimestamp(finishedMs)}
+                      {Number.isFinite(took) && took >= 0 ? ` · took ${formatDuration(took)}` : ''}
+                    </dd>
+                    {results.size_bytes !== null && (
+                      <>
+                        <dt className="text-slate-400">Processed size</dt>
+                        <dd>{formatFileSize(results.size_bytes)}</dd>
+                      </>
+                    )}
+                    {results.sha256 && (
+                      <>
+                        <dt className="text-slate-400">SHA-256</dt>
+                        <dd className="font-mono break-all">{results.sha256}</dd>
+                      </>
+                    )}
+                    {results.failure_code && (
+                      <>
+                        <dt className="text-slate-400">Reason</dt>
+                        <dd className="text-red-600">{failureMessage(results.failure_code)}</dd>
+                      </>
+                    )}
+                    {runtime.lastJob?.status === 'COMPLETED' && results.sha256 && (
+                      <>
+                        <dt className="text-slate-400">Validation</dt>
+                        <dd>Format validation passed</dd>
+                      </>
+                    )}
+                  </dl>
+                )}
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   {canRetry && (

@@ -3,7 +3,7 @@
  * persistence. Kept free of React so every rule is directly unit-testable.
  */
 
-import type { DocumentStatus } from './types';
+import type { DocumentStatus, FailureCode } from './types';
 
 /** Versioned key so a future persisted-schema change cannot silently break older data. */
 export const STORAGE_KEY = 'eddp.tracked-jobs.v1';
@@ -49,6 +49,23 @@ export function isTerminalStatus(status: DocumentStatus): boolean {
 
 export function statusLabel(status: DocumentStatus): string {
   return STATUS_LABELS[status];
+}
+
+/**
+ * User-facing explanations for every payload-free backend failure code. Unknown future
+ * codes fall back to the raw stable code instead of rendering nothing.
+ */
+const FAILURE_MESSAGES: Partial<Record<FailureCode, string>> = {
+  EMPTY: 'The stored file was empty, so there was nothing to validate.',
+  TOO_LARGE: 'The stored file exceeded the processing size limit.',
+  SIZE_MISMATCH: 'The stored size did not match the size declared at upload.',
+  INVALID_FORMAT: 'The content could not be parsed as a valid document.',
+  FORMAT_MISMATCH: 'The content does not match the file type declared at upload.',
+  RESOURCE_LIMIT: 'Validation resource limits (pages, objects or pixels) were exceeded.',
+};
+
+export function failureMessage(code: FailureCode): string {
+  return FAILURE_MESSAGES[code] ?? code;
 }
 
 /**
@@ -124,4 +141,11 @@ export function formatTimestamp(epochMs: number): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/** Compact processing duration (e.g. "2.4 s"); invalid values render nothing. */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const seconds = ms / 1000;
+  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`;
 }

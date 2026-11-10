@@ -6,6 +6,9 @@ if GitHub's default branch is renamed, update the push filter too. No paths filt
 
 ## Gates
 
+- **Frontend quality**: independent Ubuntu 24.04 job with Node.js 24, `npm ci` from
+  `frontend/package-lock.json`, ESLint, Prettier, Vitest and the production TypeScript/Vite build.
+  All commands run in `frontend/`; any failure fails the job. No shared npm cache or build artifacts.
 - **Python quality**: Ubuntu 24.04, Python 3.14, uv **0.13.6**, `uv sync --locked`, complete offline
   pytest suite, `ruff check .`, and `ruff format --check .`. Offline emulator-dependent skips are
   intentional; they are executed explicitly in the Docker job, not counted as integration evidence.
@@ -18,14 +21,16 @@ if GitHub's default branch is renamed, update the push filter too. No paths filt
   failures, collection errors and empty suites. Only the original strict SSE metadata assertion
   xfail is permitted by exact node ID. Its marker is unchanged: an unexpected pass fails too.
   No `continue-on-error`, marker weakening, retries that swallow failures or broad xfail allowance.
-- Job timeouts are 10/35 minutes; execution steps are bounded at 8/30 minutes. Subcommands have
-  shorter bounds (event suite: 15 minutes). Real visibility/lease/DLQ tests intentionally take
+- Frontend/Python/Docker job timeouts are 10/10/35 minutes; backend execution steps are bounded at
+  8/30 minutes. Subcommands have shorter bounds (event suite: 15 minutes).
+  Real visibility/lease/DLQ tests intentionally take
   several minutes. Concurrency cancellation supersedes older runs for the same PR/ref.
 
 ## Security and isolation
 
-All three actions are pinned to verified immutable upstream commits (checkout v6, setup-python v6,
-setup-uv v7). No `pull_request_target`, privileged follow-up workflow, untrusted expression in a shell,
+All four actions are pinned to verified immutable upstream commits (checkout v6, setup-python v6,
+setup-uv v7, setup-node v6). No `pull_request_target`, privileged follow-up workflow, untrusted
+expression in a shell,
 secrets, OIDC, package writes, deployment, image push, or shared writable dependency/build cache.
 `contents: read` is the only token permission; checkout does not persist credentials. uv action
 caching is disabled. Docker layers stay on the disposable runner; nothing is exported to a cache.
@@ -61,9 +66,13 @@ daemon; this runner never performs broad pruning or volume deletion to hide that
 
 ### Log policy
 
+The frontend job prints ordinary npm/tool output for this repository's offline unit tests; it
+receives no application/registry credentials or real documents and uploads no artifacts. npm audit
+notices do not fail `npm ci`; dependency vulnerability remediation is a separate reviewed change.
+
 Build/test/Compose output goes to a temporary private file and is deleted after each command.
-The runner prints only fixed stage names, numeric `CI_RESULT` counters and sanitized exit/timeout
-errors. No raw Compose config, Docker/service logs, JUnit traceback artifacts, environment dump,
+The backend runner prints only fixed stage names, numeric `CI_RESULT` counters and sanitized
+exit/timeout errors. No raw Compose config, Docker/service logs, JUnit traceback artifacts, environment dump,
 request bodies, document metadata, presigned URLs/policies or SDK exception messages are published.
 This intentionally sacrifices inline traceback detail. To diagnose a failing gate, rerun the matching
 suite locally using the project instructions, with dummy emulator credentials only; keep raw output
@@ -84,6 +93,16 @@ uv run python infra/ci/run.py docker
 uv run python infra/ci/run.py cleanup
 ```
 
+Frontend reproduction (Node.js 24, from `frontend/`):
+
+```sh
+npm ci
+npm run lint
+npm run format:check
+npm test
+npm run build
+```
+
 No local API/gateway ports need to be free, and local development services/data can stay intact.
 Docker configuration validation happens before any startup. Existing development persistence
 verification remains separate: `uv run python infra/local/verify_persistence.py` retains its data.
@@ -98,12 +117,13 @@ the commit pins with floating tags. Actionlint validation is not a hosted workfl
 
 ## Manual GitHub settings
 
-1. Enable Actions and permit these three upstream actions (or their pinned SHAs) in organization/
+1. Enable Actions and permit these four upstream actions (or their pinned SHAs) in organization/
    repository policy. Keep default workflow permissions **read-only** and PR approval/write grants off.
 2. Require approval for fork workflows, preferably all outside collaborators. Never provide secrets
    to untrusted PR code. Do not switch this job to a self-hosted runner to avoid hosted limits.
 3. After publication and the first successful hosted run, protect `master` with required checks
-   **Python quality** and **Docker integration**, pull-request review and up-to-date checks as desired.
+   **Frontend quality**, **Python quality** and **Docker integration**, pull-request review and
+   up-to-date checks as desired.
    Confirm the actual check names in GitHub before saving the rule. Review workflow changes carefully.
 4. No AWS/GHCR token, environment, repository secret, Coveralls setting or deployment configuration.
    The workflow does not currently enable merge queues; add a reviewed `merge_group` trigger before
@@ -112,8 +132,8 @@ the commit pins with floating tags. Actionlint validation is not a hosted workfl
 Nothing is committed/pushed automatically. The new workflow cannot run on GitHub until the user
 publishes it. Current local versus hosted evidence is recorded in `docs/PROJECT_STATUS.md`.
 
-## Reuse for delivery
+## Local images only
 
-CI also exposes `workflow_call` for the [release workflow](../release/README.md). A tag release runs
-these same gates at the tagged commit with read-only permissions and no registry token. Only its
-separate, dependent publishing job can write packages; ordinary CI jobs never publish images.
+GHCR publishing automation and its dedicated tooling have been removed. CI does not publish images
+or run on release tags. Local Docker runtime builds and Lambda artifact packaging/deployment remain
+unchanged; see `infra/events/README.md` for the local event stack.

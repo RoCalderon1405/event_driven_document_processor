@@ -18,6 +18,8 @@ CMD ["uvicorn", "event_driven_document_processor.main:app", "--host", "0.0.0.0",
 FROM runtime AS test
 RUN uv sync --frozen
 COPY --chown=app:app tests ./tests
+# Workflow contract tests need the CI definition, not any publishing/runtime configuration.
+COPY --chown=app:app .github/workflows/ci.yml ./.github/workflows/ci.yml
 CMD ["uv", "run", "--no-sync", "pytest"]
 
 # Native wheels are resolved/installed in the pinned Lambda AL2023 runtime, not host Python.

@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from event_driven_document_processor.modules.documents.domain.enums import DocumentStatus
+from event_driven_document_processor.modules.documents.domain.processing import FailureCode
 
 
 class CreateDocumentRequest(BaseModel):
@@ -17,7 +18,21 @@ class CreateDocumentRequest(BaseModel):
     description: str | None = Field(default=None, max_length=500)
 
 
+class ProcessingResultResponse(BaseModel):
+    """Safe public subset of processing facts; lease, token and version stay internal."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    started_at: datetime
+    finished_at: datetime | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
+    failure_code: FailureCode | None = None
+
+
 class DocumentJobResponse(BaseModel):
+    """Job snapshot; `processing` stays null until an attempt records results."""
+
     model_config = ConfigDict(from_attributes=True)
 
     job_id: UUID
@@ -26,6 +41,7 @@ class DocumentJobResponse(BaseModel):
     description: str | None
     status: DocumentStatus
     created_at: datetime
+    processing: ProcessingResultResponse | None = None
 
 
 class CreateUploadRequest(CreateDocumentRequest):

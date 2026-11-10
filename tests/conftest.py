@@ -23,6 +23,12 @@ def client():
         app.dependency_overrides.clear()
 
 
+@pytest.fixture
+def repository(client):
+    """The in-memory repository wired behind the overridden API dependency."""
+    return app.dependency_overrides[get_document_repository]()
+
+
 @pytest.fixture(scope="session")
 def valid_documents() -> dict[str, bytes]:
     """Generate genuine minimal documents with maintained encoders, not header-only fakes."""

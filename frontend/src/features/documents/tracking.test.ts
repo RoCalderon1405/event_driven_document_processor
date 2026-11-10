@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  failureMessage,
+  formatDuration,
   formatTimestamp,
   isTerminalStatus,
   MAX_POLL_DELAY_MS,
@@ -11,7 +13,7 @@ import {
   serializeTrackedJobs,
   statusLabel,
 } from './tracking';
-import type { DocumentStatus } from './types';
+import type { DocumentStatus, FailureCode } from './types';
 
 const ALL_STATUSES: DocumentStatus[] = [
   'PENDING',
@@ -49,6 +51,40 @@ describe('pollDelayMs', () => {
     expect(pollDelayMs(3)).toBe(8000);
     expect(pollDelayMs(4)).toBe(MAX_POLL_DELAY_MS);
     expect(pollDelayMs(MAX_POLL_FAILURES)).toBe(MAX_POLL_DELAY_MS);
+  });
+});
+
+describe('failureMessage', () => {
+  it('explains every backend failure code in plain language', () => {
+    const codes: FailureCode[] = [
+      'EMPTY',
+      'TOO_LARGE',
+      'SIZE_MISMATCH',
+      'INVALID_FORMAT',
+      'FORMAT_MISMATCH',
+      'RESOURCE_LIMIT',
+    ];
+    for (const code of codes) {
+      // A real sentence, never the raw stable code.
+      expect(failureMessage(code)).not.toBe(code);
+      expect(failureMessage(code).length).toBeGreaterThan(10);
+    }
+    expect(failureMessage('EMPTY')).toContain('empty');
+    expect(failureMessage('FORMAT_MISMATCH')).toContain('declared at upload');
+  });
+
+  it('falls back to the raw code for a future backend value', () => {
+    expect(failureMessage('SOMETHING_NEW' as FailureCode)).toBe('SOMETHING_NEW');
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats short durations precisely and longer ones in whole seconds', () => {
+    expect(formatDuration(0)).toBe('0.0 s');
+    expect(formatDuration(2_400)).toBe('2.4 s');
+    expect(formatDuration(45_600)).toBe('46 s');
+    expect(formatDuration(Number.NaN)).toBe('');
+    expect(formatDuration(-1)).toBe('');
   });
 });
 

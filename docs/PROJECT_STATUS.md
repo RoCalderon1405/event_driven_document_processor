@@ -1,5 +1,217 @@
 # Project status
 
+## Frontend Phase 4 — CI and release cleanup
+
+Implemented 2026-11-10 without committing or pushing. Earlier sections are historical records;
+in particular their GHCR limitations no longer describe a supported publishing feature.
+Existing uncommitted Phase 3 changes were preserved.
+
+### Changes
+
+- `.github/workflows/ci.yml`: independent **Frontend quality** job on Ubuntu 24.04 / Node.js 24,
+  running `npm ci`, lint, formatting, tests and production build from `frontend/`, with a 10-minute
+  timeout. The setup-node v6 commit pin was resolved from upstream and its cache-disable input
+  checked against that revision's `action.yml`. No shared cache, secrets, write permissions,
+  artifact upload or error suppression. Existing Python/Docker jobs are unchanged.
+- Removed the unused `workflow_call` trigger and `.github/workflows/release.yml`,
+  `infra/release/{__init__.py,publish.py,README.md}`, `tests/unit/test_release.py` (38 cases), and
+  the dedicated release ADR. Local Docker targets and Lambda packaging/bootstrap are unchanged.
+- Added `tests/unit/test_frontend_ci.py` (2 guards for locked gates/order, SHA pins and the
+  read-only/non-publishing boundary). Updated root/frontend/CI guides and CHANGELOG; removed
+  obsolete release instructions and replaced the old release status section with a removal note.
+- `Dockerfile` test stage now copies only `ci.yml` so those workflow guards also run inside Docker;
+  runtime and Lambda packaging stages are unchanged.
+- The GHCR-hosted upstream uv base image is retained: consuming that build dependency is not
+  publishing this application's images.
+
+### Verified checks
+
+- Passed: clean temporary-copy frontend `npm ci`, ESLint, Prettier, **49 tests in 6 files**, and
+  TypeScript/Vite production build (239.76 kB JS / 19.03 kB CSS). Dependency lockfile unchanged.
+- Passed: `uv run python infra/ci/run.py quality` (locked sync, Python 3.14, pytest, Ruff lint and
+  full Python formatting). Direct `uv run pytest -q`: **256 passed, 57 intentional opt-in skips**.
+  Counts decreased by the 38 removed release tests and increased by 2 workflow guards.
+- Passed: Actionlint 1.7.12 on the remaining CI workflow; both normal/event Compose configurations;
+  `git diff --check` (only existing Git LF/CRLF notices).
+- Passed: normal `docker compose --profile test run --build --rm tests`: **298 passed,
+  14 separately opt-in suite skips, 1 unchanged strict SSE xfail** (313 collected).
+- Passed: `uv run python infra/local/verify_persistence.py` after the normal Docker suite;
+  job survived API restart and Floci recreation, with no volume deletion.
+- Isolated Docker rerun: **298 regression passed, zero skips, 1 known SSE xfail**;
+  **5 Lambda compatibility passed, zero skips**. Runtime/test/native Lambda/event images built.
+  The real-event command exited **143** without `CI_RESULT` counters; the full gate therefore
+  **failed**, not passed. Both exact-project cleanup steps passed for that full run.
+  A fresh isolated event-only reproduction built successfully but exited **125** without test
+  counters; its scoped cleanup exited 1. Subsequent `docker ps`, `docker compose ls`, and
+  `docker info` all failed because the Docker Desktop Linux-engine named pipe was missing.
+  Final real-event verification and cleanup of the event-only reproduction are **blocked by an
+  unavailable Docker daemon**; no event-suite pass is claimed. This does not establish the cause
+  of the earlier exit 143.
+
+### Limitations and execution notes
+
+- The first isolated Docker attempt reported 296 passed / 2 failed / 1 known xfail before stopping
+  at regression. The two new workflow tests needed `ci.yml`, which was absent from the test image;
+  copying that single file into the test stage fixed both normal and isolated regression suites.
+  Both exact-project cleanup steps passed even on that failed attempt.
+- First in-place `npm ci` was blocked by Windows `EPERM` unlinking a loaded lightningcss native
+  module in existing `node_modules`. No processes were killed; the complete gate sequence passed
+  from a clean temporary source copy instead. The existing dependency directory may need a fresh
+  `npm ci` after the process holding that module is stopped.
+- Locked npm installation reported **10 moderate vulnerabilities**. No audit fix, dependency
+  upgrades or lockfile churn were introduced as part of CI/release cleanup.
+- No GitHub-hosted workflow execution or branch-protection change was performed. After publishing,
+  require **Frontend quality** alongside the existing Python/Docker checks as described in the CI
+  guide. Local execution and Actionlint do not substitute for hosted-run evidence.
+- Docker Desktop must be restored before rerunning `uv run python infra/ci/run.py docker`.
+  Inspect the event-only reproduction's generated `eddp-ci-*-events` project through Compose
+  labels and clean up only that exact project if it remains; its ad-hoc reproduction did not
+  persist the project name in `.ci-state.json`. Do not prune or remove development volumes.
+- No registry publication, deployment, commits, pushes or volume deletion.
+
+### Earlier verification resume — Docker preflight blocked; npm audit reviewed
+
+- Docker availability was checked first with
+  `docker info --format 'Server={{.ServerVersion}} OS={{.OSType}}'`. It failed because
+  `//./pipe/dockerDesktopLinuxEngine` was missing. The isolated CI Docker gate was **not started**:
+  regression, Lambda compatibility and real-event tests have no new passing evidence from this
+  attempt. Earlier results above remain historical. No conflicting jobs or volume cleanup ran.
+- With Node 24.19.0 / npm 11.17.0, `npm audit --package-lock-only --json` reproduced **10 moderate
+  affected packages**, zero high/critical. These are propagated findings from one underlying
+  advisory: [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)
+  (CVE-2026-118764), glob-pattern amplification / CPU and memory exhaustion in `minimatch`.
+  Locked `minimatch` 10.2.6 is affected; the advisory lists 11.0.1 as patched.
+- The affected dependency chain is development-only: `eslint`, `@eslint/js`,
+  `@eslint/config-array`, `typescript-eslint`, its `eslint-plugin`, `parser`, `type-utils`,
+  `typescript-estree` and `utils` packages, and `minimatch`. All ten lockfile entries have
+  `dev: true`. ESLint/config-array/typescript-estree depend on minimatch 10.x; the production
+  React/React DOM/scheduler chain does not depend on these packages.
+- `npm audit --omit=dev --package-lock-only --json` **passed with zero vulnerabilities**.
+  No production dependency finding was identified by this audit; this is not proof that all
+  application or deployment risks are absent.
+- Exposure is developer/CI availability when attacker-controlled glob patterns reach affected
+  preprocessing (`optimizationLevel >= 2`). Exact call-site exploitability was not tested.
+  Untrusted PR code/configuration should remain confined to disposable, time-bounded CI jobs;
+  uploaded documents are not passed to the frontend lint tooling in the application path.
+- npm's proposed fixes include breaking/downgrade suggestions (ESLint/@eslint/js 9.39.5 and
+  typescript-eslint 8.36.0); none were applied. Prefer a reviewed compatible upstream tooling fix,
+  then regenerate the lockfile and rerun frontend gates. Do not force minimatch 11 into consumers
+  declaring 10.x without compatibility testing. Package manifests/lockfiles remain unchanged.
+- Remaining blocker: restore Docker Desktop's **Linux engine**, then run
+  `uv run python infra/ci/run.py docker` serially and record its actual counters and cleanup.
+  Previous event-only reproduction cleanup remains unverified until the daemon is available.
+
+### Latest verification resume — Docker recovered; full isolated gate passed
+
+This evidence supersedes the Docker availability/event-verification and cleanup blockers recorded
+above. Earlier failed attempts remain in the record, not counted as passes.
+
+- **Passed preflight:** `docker info --format 'Server={{.ServerVersion}} OS={{.OSType}}'`
+  reported Docker Engine **29.7.2**, Linux.
+- **Passed:** `uv run python infra/ci/run.py docker`, executed as the only Docker verification job.
+  Compose version and both isolated configuration checks passed; runtime/test images and native
+  Lambda/event images built successfully.
+- **Passed regression:** `CI_RESULT passed=298 failed=0 errors=0 skipped=0 xfailed=1`.
+  The one xfail is the unchanged, explicitly allowed strict SSE metadata case.
+- **Passed Lambda compatibility:** `CI_RESULT passed=5 failed=0 errors=0 skipped=0 xfailed=0`.
+- **Passed real S3/SQS/Lambda events:**
+  `CI_RESULT passed=9 failed=0 errors=0 skipped=0 xfailed=0`.
+- **Passed cleanup:** both exact-project cleanup steps in the full gate completed successfully;
+  `.ci-state.json` was absent afterwards.
+- The prior interrupted event-only project was identified through Compose labels as
+  `eddp-ci-a63fdf5b75754a67-events`, with this checkout's event Compose/CI override files and
+  `infra/ci/empty.env`. After the gate finished, its exact-project
+  `down --remove-orphans --timeout 15` cleanup passed. No volume-removal flag, pruning, or unrelated
+  project cleanup was used. Persistent development and Lambda data volumes were not deleted.
+- **npm findings rechecked without installation or edits:** full lockfile audit returned 10 moderate
+  affected packages, zero high/critical; all ten affected lockfile entries are development-only.
+  They trace to the single minimatch DoS advisory documented above. The production-only lockfile
+  audit returned zero findings (exit 0). This is a developer/CI glob-processing availability risk,
+  not an identified React browser-runtime vulnerability; call-site exploitability was not tested.
+- No automatic fixes, breaking upgrades/downgrades, dependency manifest or lockfile changes,
+  commits or pushes. Remaining limitations: the development-tooling advisory is unresolved and
+  GitHub-hosted workflow execution/branch-protection configuration are still unverified. There is
+  no remaining local Docker gate or interrupted-project cleanup blocker from these attempts.
+
+## Frontend Phase 3 — document processing results
+
+Completed 2026-11-10. No commits made this phase; nothing pushed; default branch `master`.
+Baseline: commit `8a41878` (Phases 1–2, committed outside this session); Phase 3 is uncommitted.
+
+### Scope
+
+Additive API extension plus result display; polling, storage and layout otherwise unchanged.
+
+**Backend (2 source-adjacent changes + 3 test files)**
+
+- `api/schemas.py` — new `ProcessingResultResponse` (`started_at`, `finished_at`, `sha256`,
+  `size_bytes`, `failure_code`) exposed as an optional `processing` field on
+  `DocumentJobResponse`: null until an attempt records results, a safe subset afterwards. The
+  internal lease, token and object version are simply not declared fields, so they cannot be
+  serialized. All pre-existing response keys are unchanged.
+- Router, services, repositories, processing store: **unchanged** — `model_validate` with
+  `from_attributes` reads the safe subset straight off `DocumentJob.processing`.
+- `tests/integration/test_documents_api.py` — 3 new contract tests (pending → `null`; completed →
+  safe subset with parseable timestamps and no internal strings; failed → `failure_code` only,
+  no completion facts) plus a `repository` fixture in `tests/conftest.py`.
+- `tests/unit/test_processing_service.py` — the internal-facts guard now asserts the exact new
+  key sets and that token/version strings never appear in the dump.
+- `tests/unit/test_uploads.py` — exact-key upload contract extended with `processing: null`.
+
+**Frontend (3 source + 3 test files + docs)**
+
+- `types.ts` — `FailureCode`, `ProcessingResult`, optional `processing` on `DocumentJob`.
+- `tracking.ts` — `failureMessage()` covering all six backend codes with a raw-code fallback for
+  future values, and `formatDuration()`.
+- `RecentDocuments.tsx` — results block rendered only once `finished_at` exists: finish time and
+  duration, processed size, full SHA-256 (monospaced), "Format validation passed" on COMPLETED,
+  plain-language Reason on FAILED. No new requests — results ride the terminal poll where polling
+  already stops.
+- Tests **+6**: `tracking` (failure-code coverage + fallback, duration), `RecentDocuments`
+  (completion results, failure reason, in-progress suppression), `api` (processing round-trip).
+- Docs: `CHANGELOG.md`, `frontend/README.md` (new "Processing results (Phase 3)" section),
+  root `README.md` feature bullet.
+
+**Not changed:** polling constants/behaviour, localStorage schema, CI, GHCR, endpoint paths.
+
+### Verification (all executed 2026-11-10)
+
+| Check | Result | Status |
+| --- | --- | --- |
+| `npm test` | **49 passed (6 files)** — 43 existing + 6 new | passed |
+| `npm run lint` (eslint) | clean | passed |
+| `npm run format:check` (prettier, incl. edited docs) | clean | passed |
+| `npm run build` (tsc + vite) | OK — 239.76 kB JS / 19.03 kB CSS (gzip 75.03 / 4.80 kB) | passed |
+| `uv run python infra/ci/run.py quality` | **5/5 PASS** (sync, Python 3.14, offline pytest, ruff, format) — first run failed, see notes | passed |
+| `uv run pytest -q` | **292 passed, 57 skipped** (+3 new integration tests) | passed |
+| `uv run ruff check .` | All checks passed | passed |
+| `docker compose config --quiet` | OK | passed |
+| `docker compose -p eddp-lambda-probe -f compose.lambda.yaml --profile processing config --quiet` | OK | passed |
+| `docker compose --profile test run --build --rm tests` | **334 passed, 14 skipped, 1 xfailed** (349 collected; strict-SSE xfail unchanged) | passed |
+| `uv run python infra/local/verify_persistence.py` | **PASS** — job persisted across API restart and Floci container recreation; `lambda-data` volume retained | passed |
+| Full-flow probe (event stack, ports 8001/4567) | 404 path unchanged; valid pikepdf PDF (537 B) → **`['PENDING', 'PROCESSING', 'COMPLETED']`** in 16.1 s with `processing` = safe 5-key set, 64-char lowercase hex digest, `size_bytes == 537`, `finished_at ≥ started_at`, 0.896 s recorded duration, `failure_code = null`; invalid 8-byte PDF → **`['PENDING', 'FAILED']`** with `failure_code = INVALID_FORMAT`, `sha256 = size_bytes = null`; every response asserted free of `token`/`version_id`/`lease_expires_at` and to keep the original six keys; script ended `EVENT FLOW VERIFICATION OK` | passed |
+| Browser / human interaction | not executed (no real browser session) | skipped |
+| GHCR-hosted release | not touched this phase | not in scope |
+
+Execution notes (honesty record):
+
+- The **first** `run.py quality` run failed at offline pytest:
+  `test_http_upload_and_original_get_contract` asserted the exact pre-Phase-3 job key set. This is
+  the intended contract guard meeting an additive field; the test was updated to
+  `original six + processing` (with `processing is null` for a fresh upload), then re-run: 5/5 PASS.
+- The probe's Windows console printed `sha256=5a67e02e0f74�` — an encoding artifact of the
+  ellipsis in the abbreviated print only; the assertion verified all 64 characters are lowercase hex.
+- Phase 1/2 work was committed as `8a41878` outside this session; this phase made no commits.
+
+### Remaining limitations
+
+- Results are metadata only: no extracted text, page previews, malware scanning, or history view.
+- `processing` for a still-running attempt exposes only `started_at` (no live progress percentage).
+- No authentication; tracking history remains per-browser; `DUPLICATE` not producible locally
+  until backend deduplication exists.
+- No real-browser or human-interaction verification (jsdom tests only).
+- GHCR-hosted release remains unverified (unchanged from earlier phases).
+
 ## Frontend Phase 2 — document tracking (Recent Documents)
 
 Completed 2026-11-09. No commits; nothing pushed; default branch `master`.
@@ -156,69 +368,11 @@ Execution notes (honesty record):
 - The 10 MiB client limit mirrors the backend default and is not yet advertised by an API endpoint.
 - Hosted preview/publishing remains unverified, as before.
 
-## GHCR continuous delivery — implemented, hosted publication unverified
+## GHCR continuous delivery — removed in Frontend Phase 4
 
-### Scope and files
-- `.github/workflows/ci.yml` now exposes `workflow_call` without changing the existing PR/master/
-  manual gates or permissions. `.github/workflows/release.yml` validates pushed `v*` tags, invokes
-  that CI at the same tagged revision, then enables a separate dependent publishing job.
-- `infra/release/publish.py` validates canonical SemVer/clean checkout/exact commit/master ancestry,
-  builds and inspects the explicit Linux/amd64 `runtime` target, rechecks remote Git tag identity,
-  refuses existing version/full-SHA image tags, publishes with temporary GITHUB_TOKEN login config,
-  verifies matching remote digests and records them in the workflow summary. No floating aliases.
-- Only the publishing job requests `packages: write` plus `contents: read`. CI/emulator jobs receive
-  no package-write token. Credentials never enter Docker build or child environments; no new action
-  dependency was added. Existing upstream Actions remain SHA-pinned.
-- `tests/unit/test_release.py`: 38 offline cases for version/provenance, production target selection,
-  duplicate guards, fail-closed registry behavior, partial publication, digest verification and logs.
-- `infra/release/README.md`, ADR 0006, README, CI guide and CHANGELOG document user-operated releases,
-  package/tag settings, least privilege, non-atomic failure recovery and the GHCR immutability boundary.
-- No application contracts, dependencies/lockfile, Docker targets or AWS infrastructure changed.
-  No commit, tag creation, push, login to GHCR or remote publication was performed by the agent.
-
-### Actual checks
-- The production target built locally through the actual release build helper and passed non-root/
-  Uvicorn/application-import/no-pytest/no-Ruff checks in a network-disabled disposable container.
-  Its local `v0.0.0-local` OCI label is smoke-test metadata, not a published release or registry digest.
-  An additional local smoke check started its real Uvicorn process and received HTTP 200 from
-  `/health` inside a network-disabled container, then stopped it cleanly.
-- `uv sync --locked` and reusable quality runner passed; final direct offline suite: **285 passed,
-  57 intentional opt-in skips**, including all **38 release tests**. Ruff lint/full formatting passed.
-- Actionlint 1.7.12 validated both workflows, including the reusable CI dependency. The checkout and
-  setup-python pins were re-resolved upstream. Normal Compose validation and `git diff --check` passed.
-- Initial Docker CI attempt failed collection because the first build snapshot captured a literal
-  NUL in a new invalid-input test fixture. The fixture was corrected to a source escape, 37/37 release
-  tests passed, and the complete isolated Docker gate was restarted. That first failed run cleaned
-  up both exact projects and is not reported as a passing integration run.
-- Normal development Docker suite passed: **326 passed, 14 separately executed-suite skips,
-  1 unchanged strict SSE xfailed**. The restart verifier passed, retaining its job across API restart
-  and Floci container recreation.
-- The complete reusable isolated CI rerun then passed: **326 regression passes / zero skips /
-  1 known SSE xfail**, **5 compatibility passes / zero skips**, **9 real event passes / zero skips**.
-  Both exact-project cleanup steps passed. One final provenance test was subsequently added to cover
-  event SHAs that are annotated tag objects as well as already-peeled commit SHAs; all 38 release
-  cases passed offline. The final isolated regression rerun passed **327 / zero skips /
-  1 known SSE xfail**, including that additional case, and scoped cleanup passed.
-- Final inspection found no CI containers, networks or cleanup state left behind. No volumes were
-  deleted; Floci's previously documented namespaced code-artifact volumes are deliberately retained.
-  Normal development API/Floci remain healthy. The Git index remains untouched.
-
-### Required manual controls and remaining limits
-**No hosted release verified.** Publishing requires the user to merge/publish these changes and push
-an unused canonical SemVer tag. Local mocks/builds do not prove GITHUB_TOKEN registry authentication,
-package-write authorization, tag/digest publication or GitHub-hosted workflow execution.
-
-Protect `v*` against updates/deletions and restrict creation/bypass to trusted maintainers; protect
-master with CI/review. Permit the job's package-write permission and link any existing package to
-this repository with Actions write access. Set package visibility deliberately. No PAT/AWS secrets.
-
-GHCR has no create-only multi-tag transaction in this implementation. The workflow serializes its
-publishers and refuses duplicates, but independent package writers can race/overwrite mutable tags;
-restrict them administratively. Only the digest is intrinsically content-addressed. A partial push
-requires inspection, not automatic overwrite/rollback. One release per commit; no moving latest tag.
-GitHub can supersede pending concurrent runs: push release tags one at a time. See the release guide.
-The "production image" is the existing runtime packaging target, not a claim of production security
-readiness or an AWS deployment. First real publication and consumption remain user-operated checks.
+The unused publishing workflow, dedicated helper, tests, release guide and ADR were removed.
+No hosted publication was ever verified. Earlier phase mentions below are historical scope notes,
+not instructions to configure package publishing. Local runtime and Lambda image builds remain.
 
 ## README presentation refresh
 

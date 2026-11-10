@@ -186,7 +186,10 @@ def test_http_upload_and_original_get_contract(client: TestClient) -> None:
         "description",
         "status",
         "created_at",
+        "processing",
     }
+    # Additive, backward-compatible field: no results exist before an attempt runs.
+    assert body["job"]["processing"] is None
     assert client.get(f"/api/v1/documents/{body['job']['job_id']}").json() == body["job"]
 
 

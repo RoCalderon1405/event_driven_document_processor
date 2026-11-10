@@ -276,4 +276,15 @@ def test_public_schema_hides_all_internal_facts(setup_processing: tuple):
         "description",
         "status",
         "created_at",
+        "processing",
     }
+    # Only the declared safe subset is readable; extra dataclass attributes are ignored.
+    assert set(response["processing"]) == {
+        "started_at",
+        "finished_at",
+        "sha256",
+        "size_bytes",
+        "failure_code",
+    }
+    assert "private-token" not in repr(response)
+    assert "private-version" not in repr(response)

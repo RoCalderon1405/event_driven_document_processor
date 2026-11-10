@@ -5,8 +5,8 @@ FastAPI presigned-POST flow, with live processing-status tracking. Built with **
 TypeScript + Vite + Tailwind CSS v4**.
 
 Phase 1 added direct-to-storage uploads; Phase 2 added the Recent Documents section, which polls the
-API for real job status until a terminal state. Processing-result details and hosted CI are not
-implemented yet.
+API for real job status until a terminal state; Phase 3 shows the processing results those polls
+return (digest, size, timing and failure reasons). Phase 4 adds a dedicated frontend CI job.
 
 ## Requirements
 
@@ -14,6 +14,11 @@ implemented yet.
 - The backend stack running locally: `docker compose up --build -d --wait api`
 
 ## Commands
+
+GitHub Actions runs these same locked-install quality gates on PRs, master pushes and manual
+dispatch with Node.js 24: `npm ci`, lint, formatting, tests and production build. See
+[CI security and reproduction](../infra/ci/README.md). Hosted execution still requires publishing
+the workflow; local checks do not prove a GitHub-hosted run.
 
 ```sh
 cd frontend
@@ -53,6 +58,21 @@ File bytes never pass through FastAPI.
   deletes an entry and its stored id.
 - Accessibility: one sr-only `role="status"` live region announces actual status transitions only —
   never each poll cycle — and per-row actions carry filename-based accessible names.
+
+## Processing results (Phase 3)
+
+The same `GET` response carries an optional `processing` object (`started_at`, `finished_at`,
+`sha256`, `size_bytes`, `failure_code`) — a safe subset of the internal metadata; the lease, token
+and object version are never sent. It is `null` until an attempt records results, so nothing
+changes for pending or in-flight jobs, and all Phase 1/2 response keys stay identical.
+
+- **Completed** rows show the finish time and duration, the processed size, the full SHA-256
+  (monospaced, wrapping) and "Format validation passed".
+- **Failed** rows show a plain-language reason for each payload-free backend failure code
+  (`EMPTY`, `TOO_LARGE`, `SIZE_MISMATCH`, `INVALID_FORMAT`, `FORMAT_MISMATCH`, `RESOURCE_LIMIT`);
+  a future unknown code falls back to displaying the code itself.
+- No extra requests: results arrive on the poll that reports the terminal status, which is also
+  where polling stops — layout, polling and storage behaviour are otherwise unchanged.
 
 ## Networking and CORS
 
@@ -97,8 +117,8 @@ src/
     ├── useUpload.ts           # Upload state machine: validate → authorize → XHR progress
     ├── useDocumentTracker.ts  # Polling, persistence, retry/remove, announcements
     ├── UploadCard.tsx         # Dropzone, progress, success and error panels
-    ├── RecentDocuments.tsx    # Tracked list, status badges, Retry/Remove controls
-    └── *.test.ts(x)           # 43 focused unit/component tests
+    ├── RecentDocuments.tsx    # Tracked list, status badges, results, Retry/Remove controls
+    └── *.test.ts(x)           # 49 focused unit/component tests
 ```
 
 No router, global state library or data-fetching framework: two HTTP endpoints do not justify them.
@@ -111,21 +131,23 @@ New abstractions are added only when a second real feature needs them.
 - `validation.test.ts` — accepted/rejected types, size, name rules, byte formatting
 - `api.test.ts` — exact request shapes (the Pydantic schemas forbid extra keys), fixed backend
   `detail` handling, 404/`getJob` behavior, never echoing FastAPI validation arrays
-- `tracking.test.ts` — terminal statuses for all five backend states, backoff math, defensive
-  localStorage parsing (corrupt/duplicate/oversized data), timestamp formatting
+- `tracking.test.ts` — terminal statuses for all five backend states, backoff math, failure-code
+  explanations for all six backend codes (plus unknown-code fallback), duration formatting,
+  defensive localStorage parsing (corrupt/duplicate/oversized data), timestamp formatting
 - `useDocumentTracker.test.ts` — resume from localStorage, terminal stop, transition-only
   announcements, failure backoff → pause → retry, 404 handling, remove cleanup, unmount cleanup,
   list cap (fake timers throughout)
-- `RecentDocuments.test.tsx` — badges for every status, paused/missing explanations, accessible
+- `RecentDocuments.test.tsx` — badges for every status, paused/missing explanations, processing
+  results (digest/size/timing/validation), failure reasons, in-progress suppression, accessible
   Retry/Remove controls, polite live region
 - `UploadCard.test.tsx` — happy path with progress events and 204 confirmation plus the tracking
   handoff, authorization state, invalid/oversized rejection, drag-and-drop, expired-link (403)
 
 All tests are offline; no emulator or Docker is required.
 
-## Known limitations (Phase 2 scope)
+## Known limitations (Phase 3 scope)
 
-- No processing-result fields or history view — jobs stop at their final status badge.
+- Results stop at metadata: no extracted text, page previews, malware scanning or history view.
 - The API has no authentication; this is a local development interface.
 - The 10 MiB client limit mirrors the backend default; a reconfigured backend is not yet
   advertised through an API endpoint.

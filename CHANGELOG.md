@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — Frontend Phase 4 (CI and release cleanup)
+
+- Added an independent Node.js 24 frontend CI job: locked npm install, lint, formatting, tests and
+  production build. Preserved backend gates, read-only permissions, SHA pins and cache isolation.
+- Removed unused GHCR publishing workflow, dedicated release helper/tests/docs and its reusable-CI
+  trigger. Local Docker runtime and Lambda packaging/processing are unchanged.
+
+## Unreleased — React frontend Phase 3 (processing results)
+
+- Extended `GET /api/v1/documents/{job_id}` with an additive, optional `processing` field:
+  `started_at`, `finished_at`, `sha256`, `size_bytes` and `failure_code` only — the internal
+  lease, token and object version remain unreachable from the public schema. Null until an
+  attempt records results; all pre-existing response keys unchanged.
+- Recent Documents now shows completion facts for finished jobs (SHA-256, processed size,
+  finish time and duration, "Format validation passed") and a plain-language reason for each
+  payload-free backend failure code on failed jobs. No polling, storage or layout changes.
+
 ## Unreleased — React frontend Phase 2
 
 - Added a Recent Documents section polling `GET /api/v1/documents/{job_id}` on one shared 2 s
@@ -22,16 +39,6 @@
   both compose files default to the local Vite origin for browser development only.
 - Added 19 focused Vitest/Testing Library tests, ESLint/Prettier configuration and production build
   verification. No router, state library, job polling or hosted frontend CI yet; no commits.
-
-## Unreleased — GHCR continuous delivery
-
-- Added canonical SemVer tag releases that reuse the complete existing CI workflow before publishing.
-- Build and inspect the non-root Linux/amd64 `runtime` target, never the Dockerfile's final test/
-  bootstrap target. Publish version/full-commit tags with verified matching GHCR digests in the summary.
-- Limit package writes to a separate publishing job using GITHUB_TOKEN; prevent workflow overwrites
-  through duplicate checks, remote-tag provenance checks and repository-wide release serialization.
-- Document tag/package access rules, partial-release behavior, local checks and the distinction between
-  configured delivery and an actual hosted release. No AWS deployment or automatic Git operations.
 
 ## Unreleased — Milestone 4 Phase 4
 
