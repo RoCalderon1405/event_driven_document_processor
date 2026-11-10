@@ -62,26 +62,28 @@ export function useDocumentTracker(): DocumentTracker {
   const runtimeRef = useRef(runtime);
   /** Per-job earliest next attempt time; a scheduling detail that never needs rendering. */
   const nextAttemptRef = useRef(new Map<string, number>());
-  const inFlightRef = useRef(new Set<string>());
-  // One controller aborts every status request once the hook unmounts. If a StrictMode
-  // re-mount reuses the hook, an aborted controller is replaced before the next poll.
-  const controllerRef = useRef(new AbortController());
+  const inFlightRef = useRef(new Map<string, AbortController>());
+  const controllerRef = useRef<AbortController | null>(null);
+  const cycleRef = useRef<AbortController | null>(null);
   const tickRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
-  const pollOne = useCallback(async (tracked: TrackedJob): Promise<void> => {
+  const pollOne = useCallback(async (tracked: TrackedJob, lifetime: AbortSignal): Promise<void> => {
     const id = tracked.job_id;
     if (inFlightRef.current.has(id)) return; // Never stack requests for the same job.
-    inFlightRef.current.add(id);
-
-    if (controllerRef.current.signal.aborted) {
-      controllerRef.current = new AbortController();
-    }
-    const signal = controllerRef.current.signal;
+    if (lifetime.aborted) return;
+    const controller = new AbortController();
+    inFlightRef.current.set(id, controller);
+    const abort = () => controller.abort();
+    lifetime.addEventListener('abort', abort, { once: true });
+    const signal = controller.signal;
+    // Object identity also rejects results for a removed then re-added id.
+    const isCurrent = () =>
+      !signal.aborted && !lifetime.aborted && jobsRef.current.includes(tracked);
 
     try {
       const job = await getJob(id, signal);
       // The job may have been removed while this request was in flight.
-      if (!jobsRef.current.some((entry) => entry.job_id === id)) return;
+      if (!isCurrent()) return;
       const current = runtimeRef.current[id] ?? EMPTY_RUNTIME;
       const updated: JobRuntime = {
         lastJob: job,
@@ -99,8 +101,7 @@ export function useDocumentTracker(): DocumentTracker {
         setAnnouncement(`${job.filename} is now ${statusLabel(job.status)}.`);
       }
     } catch (error) {
-      if (signal.aborted) return;
-      if (!jobsRef.current.some((entry) => entry.job_id === id)) return;
+      if (!isCurrent()) return;
       const current = runtimeRef.current[id] ?? EMPTY_RUNTIME;
       let updated: JobRuntime;
       if (error instanceof ApiError && error.status === 404) {
@@ -133,21 +134,28 @@ export function useDocumentTracker(): DocumentTracker {
       runtimeRef.current = { ...runtimeRef.current, [id]: updated };
       setRuntime(runtimeRef.current);
     } finally {
-      inFlightRef.current.delete(id);
+      lifetime.removeEventListener('abort', abort);
+      if (inFlightRef.current.get(id) === controller) inFlightRef.current.delete(id);
     }
   }, []);
 
   const tick = useCallback(async (): Promise<void> => {
-    const now = Date.now();
-    const targets = jobsRef.current.filter((tracked) => {
-      const state = runtimeRef.current[tracked.job_id] ?? EMPTY_RUNTIME;
-      if (state.missing || state.paused) return false;
-      if (state.lastJob && isTerminalStatus(state.lastJob.status)) return false;
-      return now >= (nextAttemptRef.current.get(tracked.job_id) ?? 0);
-    });
-    // Sequential polls keep failure counting and test timing deterministic.
-    for (const tracked of targets) {
-      await pollOne(tracked);
+    const lifetime = controllerRef.current;
+    if (!lifetime || lifetime.signal.aborted || cycleRef.current === lifetime) return;
+    cycleRef.current = lifetime;
+    try {
+      for (const tracked of [...jobsRef.current]) {
+        // Recheck immediately before dispatch, never trust a queued snapshot's eligibility.
+        if (lifetime.signal.aborted) break;
+        if (!jobsRef.current.includes(tracked)) continue;
+        const state = runtimeRef.current[tracked.job_id] ?? EMPTY_RUNTIME;
+        if (state.missing || state.paused) continue;
+        if (state.lastJob && isTerminalStatus(state.lastJob.status)) continue;
+        if (Date.now() < (nextAttemptRef.current.get(tracked.job_id) ?? 0)) continue;
+        await pollOne(tracked, lifetime.signal);
+      }
+    } finally {
+      if (cycleRef.current === lifetime) cycleRef.current = null;
     }
   }, [pollOne]);
 
@@ -157,7 +165,11 @@ export function useDocumentTracker(): DocumentTracker {
   });
 
   // Abort in-flight status requests on unmount so no state updates follow teardown.
-  useEffect(() => () => controllerRef.current.abort(), []);
+  useEffect(() => {
+    const lifetime = new AbortController();
+    controllerRef.current = lifetime;
+    return () => lifetime.abort();
+  }, []);
 
   const hasActive = jobs.some((tracked) => {
     const state = runtime[tracked.job_id];
@@ -213,6 +225,12 @@ export function useDocumentTracker(): DocumentTracker {
     for (const key of Object.keys(nextRuntime)) {
       if (!kept.has(key)) delete nextRuntime[key]; // Drop runtime for cap-evicted entries.
     }
+    for (const [id, request] of inFlightRef.current) {
+      if (!kept.has(id)) request.abort();
+    }
+    for (const id of nextAttemptRef.current.keys()) {
+      if (!kept.has(id)) nextAttemptRef.current.delete(id);
+    }
     runtimeRef.current = nextRuntime;
     setRuntime(nextRuntime);
   }, []);
@@ -234,6 +252,7 @@ export function useDocumentTracker(): DocumentTracker {
   const remove = useCallback((jobId: string) => {
     const removed = jobsRef.current.find((entry) => entry.job_id === jobId);
     if (!removed) return;
+    inFlightRef.current.get(jobId)?.abort();
     const nextJobs = jobsRef.current.filter((entry) => entry.job_id !== jobId);
     jobsRef.current = nextJobs;
     setJobs(nextJobs);

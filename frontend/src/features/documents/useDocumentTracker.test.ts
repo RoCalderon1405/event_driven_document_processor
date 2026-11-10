@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -10,6 +11,7 @@ import {
 } from './tracking';
 import type { DocumentJob } from './types';
 import { useDocumentTracker } from './useDocumentTracker';
+import { API_TIMEOUT_MS } from './api';
 
 const JOB_ID = '6f1d8c2e-0a4b-4c5d-9e8f-0a1b2c3d4e5f';
 
@@ -57,6 +59,125 @@ afterEach(() => {
 });
 
 describe('useDocumentTracker', () => {
+  it('serializes slow multi-job cycles and never refetches completed jobs', async () => {
+    let resolveFirst!: (response: unknown) => void;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue(jsonResponse(job({ job_id: 'second', status: 'COMPLETED' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useDocumentTracker());
+    act(() => {
+      result.current.track(job());
+      result.current.track(job({ job_id: 'second' }));
+    });
+    await flush();
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveFirst(jsonResponse(job({ job_id: 'second', status: 'COMPLETED' })));
+    });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not dispatch queued jobs after unmount, even when fetch ignores abort', async () => {
+    const fetchMock = vi.fn<typeof fetch>(() => new Promise(() => {}));
+    vi.stubGlobal('fetch', fetchMock);
+    const { result, unmount } = renderHook(() => useDocumentTracker());
+    act(() => {
+      result.current.track(job());
+      result.current.track(job({ job_id: 'second' }));
+    });
+    await flush();
+    const signal = fetchMock.mock.calls[0][1]?.signal;
+    unmount();
+    await advance(API_TIMEOUT_MS * 2);
+    expect(signal?.aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('skips a queued job removed during a slow request', async () => {
+    let finish!: (response: unknown) => void;
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useDocumentTracker());
+    act(() => {
+      result.current.track(job());
+      result.current.track(job({ job_id: 'second' }));
+    });
+    await flush();
+    act(() => result.current.remove(JOB_ID));
+    await act(async () => {
+      finish(jsonResponse(job({ job_id: 'second', status: 'COMPLETED' })));
+    });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts removal and ignores late success for a re-added id', async () => {
+    let finish!: (response: unknown) => void;
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useDocumentTracker());
+    act(() => result.current.track(job()));
+    await flush();
+    const signal = fetchMock.mock.calls[0][1].signal;
+    act(() => {
+      result.current.remove(JOB_ID);
+      result.current.track(job());
+    });
+    await act(async () => finish(jsonResponse(job({ status: 'COMPLETED' }))));
+    expect(signal.aborted).toBe(true);
+    expect(result.current.entries[0].runtime.lastJob?.status).toBe('PENDING');
+  });
+
+  it('counts a timeout as a retryable failure and continues to other jobs', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValue(jsonResponse(job({ status: 'COMPLETED' })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useDocumentTracker());
+    act(() => {
+      result.current.track(job());
+      result.current.track(job({ job_id: 'second' }));
+    });
+    await flush();
+    await advance(API_TIMEOUT_MS);
+    expect(result.current.entries[0].runtime.failures).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('resumes persisted tracking after StrictMode effect replay', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      serializeTrackedJobs([{ job_id: JOB_ID, filename: 'report.pdf', added_at: 1 }]),
+    );
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(job({ status: 'COMPLETED' }))));
+    const { result } = renderHook(() => useDocumentTracker(), { wrapper: StrictMode });
+    await flush();
+    await advance(POLL_INTERVAL_MS);
+    expect(result.current.entries[0].runtime.lastJob?.status).toBe('COMPLETED');
+  });
   it('resumes persisted jobs and stops polling at a terminal status', async () => {
     localStorage.setItem(
       STORAGE_KEY,

@@ -48,7 +48,8 @@ File bytes never pass through FastAPI.
 ## Status tracking (Phase 2)
 
 - A single shared interval polls `GET /api/v1/documents/{job_id}` every **2 s** while any tracked
-  job is non-terminal; the timer stops itself when nothing needs checking and clears on unmount.
+  job is non-terminal; only one sequential cycle can run at a time. Ticks during a slow cycle
+  are skipped rather than overlapped. The timer stops when nothing needs checking and on unmount.
 - Polling **stops on terminal states** `COMPLETED`, `FAILED` and `DUPLICATE` — mirroring
   `ProcessingOutcome.ALREADY_TERMINAL` in the backend — and on **404** (the entry stays visible
   as "Not found" with an explanation).
@@ -59,6 +60,23 @@ File bytes never pass through FastAPI.
   deletes an entry and its stored id.
 - Accessibility: one sr-only `role="status"` live region announces actual status transitions only —
   never each poll cycle — and per-row actions carry filename-based accessible names.
+
+### Deadlines and cancellation
+
+- API requests have a **15 s total deadline**, including reading the response body. Caller aborts
+  and timeouts cancel transport; timers/listeners are cleaned after success, failure or cancellation.
+  Status timeouts use the existing backoff and five-failure pause/Retry policy.
+- Each polling cycle rechecks membership, terminal status and backoff before dispatch. Removing
+  or cap-evicting an entry aborts its request. Lifetime-bound signals prevent queued requests or
+  late results after unmount, removal/re-addition or StrictMode effect replay.
+- Storage XHR has a **120 s total deadline**. Timeout/network failures return to the existing
+  picker with guidance; selecting again obtains a fresh authorization. No POST is automatically
+  retried. **Cancel upload** during preparation or transfer aborts the attempt and restores the
+  picker. Late events cannot report success or add cancelled uploads to tracking.
+- Cancellation is browser-side only: it cannot undo a job/object already accepted by the backend
+  or storage. A retry can create another job. No deletion/rollback API has been added.
+- Sequential scheduling means later jobs wait for earlier requests (each bounded at 15 s); the
+  2 s timer is a scheduling cadence, not a guarantee of a response every 2 s for every job.
 
 ## Processing results (Phase 3)
 
@@ -119,7 +137,7 @@ src/
     ├── useDocumentTracker.ts  # Polling, persistence, retry/remove, announcements
     ├── UploadCard.tsx         # Dropzone, progress, success and error panels
     ├── RecentDocuments.tsx    # Tracked list, status badges, results, Retry/Remove controls
-    └── *.test.ts(x)           # 49 focused unit/component tests
+    └── *.test.ts(x)           # 66 focused unit/component tests
 ```
 
 No router, global state library or data-fetching framework: two HTTP endpoints do not justify them.
@@ -131,18 +149,20 @@ New abstractions are added only when a second real feature needs them.
 
 - `validation.test.ts` — accepted/rejected types, size, name rules, byte formatting
 - `api.test.ts` — exact request shapes (the Pydantic schemas forbid extra keys), fixed backend
-  `detail` handling, 404/`getJob` behavior, never echoing FastAPI validation arrays
+  `detail` handling, 404/`getJob` behavior, header/body deadlines, caller cancellation and cleanup
 - `tracking.test.ts` — terminal statuses for all five backend states, backoff math, failure-code
   explanations for all six backend codes (plus unknown-code fallback), duration formatting,
   defensive localStorage parsing (corrupt/duplicate/oversized data), timestamp formatting
 - `useDocumentTracker.test.ts` — resume from localStorage, terminal stop, transition-only
   announcements, failure backoff → pause → retry, 404 handling, remove cleanup, unmount cleanup,
-  list cap (fake timers throughout)
+  list cap, serialized slow multi-job cycles, removal/re-addition, queued unmount safety,
+  timeout recovery and StrictMode effect replay (fake timers throughout)
 - `RecentDocuments.test.tsx` — badges for every status, paused/missing explanations, processing
   results (digest/size/timing/validation), failure reasons, in-progress suppression, accessible
   Retry/Remove controls, polite live region
 - `UploadCard.test.tsx` — happy path with progress events and 204 confirmation plus the tracking
-  handoff, authorization state, invalid/oversized rejection, drag-and-drop, expired-link (403)
+  handoff, authorization state, invalid/oversized rejection, drag-and-drop, expired-link (403),
+  timeout/retry, cancellation during authorization/storage, stale events and unmount abort
 
 All tests are offline; no emulator or Docker is required.
 

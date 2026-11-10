@@ -105,6 +105,13 @@ export function UploadCard({ onUploaded }: UploadCardProps) {
                 ? 'Requesting upload authorization…'
                 : `Uploading to private storage · ${formatFileSize(state.fileSizeBytes)}`}
             </p>
+            <button
+              type="button"
+              onClick={reset}
+              className="mt-3 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 focus-visible:outline-2 focus-visible:outline-indigo-600"
+            >
+              Cancel upload
+            </button>
           </div>
         ) : state.phase === 'success' ? (
           <div

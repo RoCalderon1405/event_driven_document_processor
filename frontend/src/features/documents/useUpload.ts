@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ApiError, createUpload } from './api';
+import { ApiError, createUpload, RequestTimeoutError } from './api';
 import type { DocumentJob } from './types';
 import { resolveContentType, validateFile } from './validation';
 
 export type UploadPhase = 'idle' | 'preparing' | 'uploading' | 'success' | 'error';
+
+export const UPLOAD_TIMEOUT_MS = 120_000;
 
 export interface UploadState {
   phase: UploadPhase;
@@ -33,6 +35,7 @@ export interface UploadController {
 
 /** Turn authorization-stage failures into short, user-facing guidance. */
 function describeAuthorizationError(error: unknown): string {
+  if (error instanceof RequestTimeoutError) return error.message;
   if (error instanceof ApiError) {
     // Backend validation (422) and outage (503) messages are fixed text, safe to display.
     if (error.status === 422 || error.status === 503) return error.message;
@@ -136,17 +139,25 @@ export function useUpload(onUploaded?: (job: DocumentJob) => void): UploadContro
       const xhr = new XMLHttpRequest();
       xhrRef.current = xhr;
       xhr.open('POST', authorization.upload.url);
+      xhr.timeout = UPLOAD_TIMEOUT_MS;
+      let settled = false;
+      const fail = (message: string) => {
+        if (abort.signal.aborted || settled) return;
+        settled = true;
+        setState((current) => ({ ...current, phase: 'error', message }));
+      };
       xhr.upload.onprogress = (event) => {
-        if (!abort.signal.aborted && event.lengthComputable && event.total > 0) {
+        if (!abort.signal.aborted && !settled && event.lengthComputable && event.total > 0) {
           const progress = Math.min(100, Math.round((event.loaded / event.total) * 100));
           setState((current) => ({ ...current, phase: 'uploading', progress }));
         }
       };
       xhr.onload = () => {
-        if (abort.signal.aborted) return;
+        if (abort.signal.aborted || settled) return;
         if (xhr.status >= 200 && xhr.status < 300) {
           // Hand the job to the tracker before the success panel renders so the
           // Recent Documents section already lists it when the user reads it.
+          settled = true;
           onUploadedRef.current?.(authorization.job);
           setState((current) => ({
             ...current,
@@ -155,24 +166,14 @@ export function useUpload(onUploaded?: (job: DocumentJob) => void): UploadContro
             jobId: authorization.job.job_id,
           }));
         } else {
-          setState((current) => ({
-            ...current,
-            phase: 'error',
-            message: describeStorageStatus(xhr.status),
-          }));
+          fail(describeStorageStatus(xhr.status));
         }
       };
       xhr.onerror = () => {
-        if (!abort.signal.aborted) {
-          setState((current) => ({
-            ...current,
-            phase: 'error',
-            message: describeStorageStatus(0),
-          }));
-        }
+        fail(describeStorageStatus(0));
       };
-      // Aborted attempts keep whatever state reset() already applied.
-      xhr.onabort = () => undefined;
+      xhr.ontimeout = () => fail('Upload timed out. Please try again.');
+      xhr.onabort = () => fail('Upload cancelled. Please try again.');
       setState((current) => ({ ...current, phase: 'uploading' }));
       xhr.send(form);
     })();

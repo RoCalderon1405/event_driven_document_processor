@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { UploadCard } from './UploadCard';
 import type { CreateUploadResponse } from './types';
+import { UPLOAD_TIMEOUT_MS } from './useUpload';
+import { API_TIMEOUT_MS } from './api';
 
 const AUTHORIZATION: CreateUploadResponse = {
   job: {
@@ -36,6 +38,9 @@ class FakeXMLHttpRequest {
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
+  timeout = 0;
+  aborted = false;
   status = 0;
   method = '';
   url = '';
@@ -55,6 +60,7 @@ class FakeXMLHttpRequest {
   }
 
   abort(): void {
+    this.aborted = true;
     this.onabort?.();
   }
 }
@@ -74,9 +80,81 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('UploadCard', () => {
+  it('returns to a retryable picker after authorization times out', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(() => new Promise(() => {}));
+    render(<UploadCard />);
+    fireEvent.change(screen.getByLabelText(/drop your file/i), { target: { files: [pdfFile()] } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(/API request timed out/i);
+    expect(screen.getByLabelText(/drop your file/i)).toBeInTheDocument();
+    expect(FakeXMLHttpRequest.instances).toHaveLength(0);
+  });
+  it('bounds storage uploads, ignores late success after timeout, and permits a fresh retry', async () => {
+    const onUploaded = vi.fn();
+    render(<UploadCard onUploaded={onUploaded} />);
+    fireEvent.change(screen.getByLabelText(/drop your file/i), { target: { files: [pdfFile()] } });
+    await waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(1));
+    const xhr = FakeXMLHttpRequest.instances[0];
+    expect(xhr.timeout).toBe(UPLOAD_TIMEOUT_MS);
+    act(() => {
+      xhr.ontimeout?.();
+      xhr.status = 204;
+      xhr.onload?.();
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(/timed out/i);
+    expect(onUploaded).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText(/drop your file/i), { target: { files: [pdfFile()] } });
+    await waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(2));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels storage upload and suppresses late progress/success', async () => {
+    const onUploaded = vi.fn();
+    render(<UploadCard onUploaded={onUploaded} />);
+    fireEvent.change(screen.getByLabelText(/drop your file/i), { target: { files: [pdfFile()] } });
+    await waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(1));
+    const xhr = FakeXMLHttpRequest.instances[0];
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel upload' }));
+    act(() => {
+      xhr.status = 204;
+      xhr.onload?.();
+      xhr.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 1 } as ProgressEvent);
+    });
+    expect(xhr.aborted).toBe(true);
+    expect(screen.getByLabelText(/drop your file/i)).toBeInTheDocument();
+    expect(onUploaded).not.toHaveBeenCalled();
+  });
+
+  it('cancels authorization before any storage request starts', async () => {
+    let authorize!: (value: unknown) => void;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          authorize = resolve;
+        }),
+    );
+    render(<UploadCard />);
+    fireEvent.change(screen.getByLabelText(/drop your file/i), { target: { files: [pdfFile()] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel upload' }));
+    await act(async () => authorize({ ok: true, json: async () => AUTHORIZATION }));
+    expect(FakeXMLHttpRequest.instances).toHaveLength(0);
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+
+  it('aborts storage work on unmount', async () => {
+    const { unmount } = render(<UploadCard />);
+    fireEvent.change(screen.getByLabelText(/drop your file/i), { target: { files: [pdfFile()] } });
+    await waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(1));
+    unmount();
+    expect(FakeXMLHttpRequest.instances[0].aborted).toBe(true);
+  });
   it('uploads a valid PDF with progress and confirms delivery', async () => {
     const onUploaded = vi.fn();
     render(<UploadCard onUploaded={onUploaded} />);

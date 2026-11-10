@@ -7,6 +7,49 @@ import type { CreateUploadResponse, DocumentJob } from './types';
  */
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
+export const API_TIMEOUT_MS = 15_000;
+
+export class RequestTimeoutError extends Error {
+  constructor() {
+    super('The API request timed out. Please try again.');
+    this.name = 'RequestTimeoutError';
+  }
+}
+
+/** Bound headers AND body reads; caller cancellation never becomes a timeout. */
+async function withDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  caller?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  let cancel = () => {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const interrupted = new Promise<never>((_, reject) => {
+    cancel = () => {
+      const reason = caller?.reason ?? new DOMException('Request cancelled', 'AbortError');
+      controller.abort(reason);
+      reject(reason);
+    };
+    if (caller?.aborted) cancel();
+    else caller?.addEventListener('abort', cancel, { once: true });
+    timer = setTimeout(() => {
+      const error = new RequestTimeoutError();
+      controller.abort(error);
+      reject(error);
+    }, API_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([
+      interrupted,
+      // Do not dispatch a request if it was cancelled before this call.
+      controller.signal.aborted ? interrupted : operation(controller.signal),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    caller?.removeEventListener('abort', cancel);
+  }
+}
+
 /** HTTP failure with a message that is always safe to display in the UI. */
 export class ApiError extends Error {
   readonly status: number;
@@ -47,21 +90,23 @@ export async function createUpload(
   request: UploadRequest,
   signal?: AbortSignal,
 ): Promise<CreateUploadResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/documents/uploads`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    // The request schema forbids unknown keys, so send exactly its documented shape.
-    body: JSON.stringify({
-      filename: request.filename,
-      content_type: request.contentType,
-      file_size_bytes: request.fileSizeBytes,
-    }),
-    signal,
-  });
-  if (!response.ok) {
-    throw new ApiError(response.status, await readDetail(response));
-  }
-  return (await response.json()) as CreateUploadResponse;
+  return withDeadline(async (requestSignal) => {
+    const response = await fetch(`${API_BASE}/api/v1/documents/uploads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // The request schema forbids unknown keys, so send exactly its documented shape.
+      body: JSON.stringify({
+        filename: request.filename,
+        content_type: request.contentType,
+        file_size_bytes: request.fileSizeBytes,
+      }),
+      signal: requestSignal,
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await readDetail(response));
+    }
+    return (await response.json()) as CreateUploadResponse;
+  }, signal);
 }
 
 /**
@@ -70,13 +115,15 @@ export async function createUpload(
  * A 404 surfaces as `ApiError(404, ...)` so the tracker can stop polling that job.
  */
 export async function getJob(jobId: string, signal?: AbortSignal): Promise<DocumentJob> {
-  const response = await fetch(`${API_BASE}/api/v1/documents/${jobId}`, {
-    method: 'GET',
-    cache: 'no-store',
-    signal,
-  });
-  if (!response.ok) {
-    throw new ApiError(response.status, await readDetail(response));
-  }
-  return (await response.json()) as DocumentJob;
+  return withDeadline(async (requestSignal) => {
+    const response = await fetch(`${API_BASE}/api/v1/documents/${jobId}`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: requestSignal,
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await readDetail(response));
+    }
+    return (await response.json()) as DocumentJob;
+  }, signal);
 }

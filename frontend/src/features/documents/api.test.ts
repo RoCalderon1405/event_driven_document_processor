@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, createUpload, getJob } from './api';
+import { API_TIMEOUT_MS, ApiError, createUpload, getJob, RequestTimeoutError } from './api';
 import type { CreateUploadResponse, DocumentJob } from './types';
 
 const AUTHORIZATION: CreateUploadResponse = {
@@ -22,6 +22,74 @@ const AUTHORIZATION: CreateUploadResponse = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+describe('request deadlines', () => {
+  it('clears the deadline and caller listener after success', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, 'removeEventListener');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => AUTHORIZATION.job }),
+    );
+    await getJob('example', controller.signal);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+  it.each(['headers', 'body'] as const)(
+    'times out stalled %s and aborts transport',
+    async (stage) => {
+      vi.useFakeTimers();
+      const pending = new Promise<never>(() => {});
+      const fetchMock = vi
+        .fn()
+        .mockImplementation(() =>
+          stage === 'headers' ? pending : Promise.resolve({ ok: true, json: () => pending }),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+      const request = getJob('example');
+      const outcome = expect(request).rejects.toBeInstanceOf(RequestTimeoutError);
+      await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
+      await outcome;
+      expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('bounds authorization requests too', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise(() => {})),
+    );
+    const request = createUpload({
+      filename: 'a.pdf',
+      contentType: 'application/pdf',
+      fileSizeBytes: 1,
+    });
+    const outcome = expect(request).rejects.toBeInstanceOf(RequestTimeoutError);
+    await vi.advanceTimersByTimeAsync(API_TIMEOUT_MS);
+    await outcome;
+  });
+
+  it.each([true, false])(
+    'cancels a request (pre-aborted: %s) without a timeout',
+    async (before) => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn(() => new Promise(() => {}));
+      vi.stubGlobal('fetch', fetchMock);
+      const controller = new AbortController();
+      if (before) controller.abort();
+      const request = getJob('example', controller.signal);
+      const outcome = expect(request).rejects.toMatchObject({ name: 'AbortError' });
+      controller.abort();
+      await outcome;
+      expect(fetchMock).toHaveBeenCalledTimes(before ? 0 : 1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
 });
 
 const JOB_ID = '6f1d8c2e-0a4b-4c5d-9e8f-0a1b2c3d4e5f';

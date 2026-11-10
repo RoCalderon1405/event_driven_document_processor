@@ -1,6 +1,9 @@
 """Real decoders reject corruption and limits, including header-only impostors."""
 
+import io
+import struct
 import subprocess
+import zlib
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -82,6 +85,51 @@ def test_animated_png_is_rejected(tmp_path: Path):
         first.save(path, format="PNG", save_all=True, append_images=[second])
     with pytest.raises(InvalidDocumentError):
         IsolatedDocumentValidator().validate(path, "image/png")
+
+
+def _background_disposal_apng(disposal: int) -> bytes:
+    """Tiny GHSA-5xm2-6676-qcp9 case: 100x100 canvas, 1x1 first frame.
+
+    Even an unpatched decoder can allocate only 40 KB for this canvas. Never use
+    the advisory's multi-gigabyte dimensions in the test suite.
+    """
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 100, 100, 8, 6, 0, 0, 0))
+        + chunk(b"acTL", struct.pack(">II", 2, 0))
+        + chunk(b"fcTL", struct.pack(">IIIIIHHBB", 0, 1, 1, 0, 0, 1, 10, disposal, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(5)))
+        + chunk(b"IEND", b"")
+    )
+
+
+@pytest.mark.parametrize("disposal", [1, 2], ids=["background", "previous"])
+def test_apng_bomb_check_precedes_canvas_allocation(
+    monkeypatch: pytest.MonkeyPatch, disposal: int
+) -> None:
+    """Both disposal modes must reject oversized headers before native allocation."""
+    fill = Mock(side_effect=AssertionError("APNG allocated before its pixel-limit check"))
+    monkeypatch.setattr(Image.core, "fill", fill)
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 10)
+    with pytest.raises(Image.DecompressionBombError):
+        Image.open(io.BytesIO(_background_disposal_apng(disposal)))
+    fill.assert_not_called()
+
+
+@pytest.mark.parametrize("disposal", [1, 2], ids=["background", "previous"])
+def test_apng_bomb_is_resource_limit_in_isolated_validator(tmp_path: Path, disposal: int) -> None:
+    """The real child process retains the API's fixed RESOURCE_LIMIT classification."""
+    path = tmp_path / "bounded-apng.png"
+    path.write_bytes(_background_disposal_apng(disposal))
+    with pytest.raises(InvalidDocumentError) as caught:
+        IsolatedDocumentValidator(max_pixels=10).validate(path, "image/png")
+    assert caught.value.code == FailureCode.RESOURCE_LIMIT
 
 
 def test_missing_staged_file_remains_retryable(tmp_path: Path) -> None:

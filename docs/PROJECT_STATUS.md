@@ -1,5 +1,193 @@
 # Project status
 
+## Final Brave browser smoke — 2026-11-10
+
+- **Passed:** configured Playwright MCP launched the installed Brave executable in an isolated,
+  headless context (Chromium **157.0.8103.39**, Brave **1.99.55**). Started the separate persistent
+  event-enabled Compose stack with `--profile processing up --build -d processing-api`; Compose
+  resolution and bootstrap passed. Vite served the current source on localhost:5173 against
+  processing-api:8001 and S3:4567. No application source/configuration was changed for this smoke.
+- **Passed real upload/results:** a synthetic local, single-page PDF (**537 bytes**) uploaded via
+  API **201** and direct S3 multipart **204**, then completed through the actual event stack.
+  Job `9a3f526a-702a-40f8-968c-2d439b21a804` displayed size, finish time, duration, validation success
+  and SHA-256 `9eaead61ef65ce791030fe848a732c239bb4d22785280a20da4a9de85bf2cb3f`,
+  matching the local file. API processing metadata confirmed completion with no failure code.
+- **Passed cancellation/retry:** browser-only Playwright routing held authorization and, in a
+  separate attempt, the storage POST. Cancel restored the picker; cancelled requests reported
+  `net::ERR_ABORTED`, no storage POST followed cancelled authorization, and cancelled storage did
+  not add a tracked job. Removing the routes and selecting the file again obtained fresh
+  authorization; retry job `e910f577-4598-4f8e-aa58-8171d0ee5c5e` completed with matching results.
+- **Passed refresh persistence:** refreshed immediately after retry upload; both tracked IDs
+  survived, fresh GETs resumed, and both completed-result panels rendered.
+- **Passed terminal stop:** request counts stayed unchanged during **6.5-second** observations
+  after completion, including after refresh (more than three polling intervals).
+- **Passed actual React unmount:** a browser-only intercepted Vite entry exposed the existing
+  React root solely for calling `unmount()`; components/hooks were unchanged. Seeded this isolated
+  context with two real synthetic pending jobs and held status responses. After unmount the root
+  was empty, in-flight GETs aborted and total API/storage requests stayed **15 → 15** over
+  **17 seconds**, beyond the API deadline; no queued requests followed teardown. Browser routes
+  were test instrumentation only, not production/backend changes.
+- **Passed console review:** no uncaught page errors or critical console errors. The sole error
+  across the smoke was a pre-existing missing `/favicon.ico` **404**. Expected cancellation
+  failures are not application errors.
+- **Scope/retention:** cancellation used controlled browser delays, not a naturally slow network;
+  this was the Vite development build in headless Brave, not a production-hosted browser test.
+  No remaining smoke blocker. Synthetic jobs/objects (including pending cancellation/unmount
+  jobs) are retained; no existing browser history, persistent volume or stored data was cleared.
+  Closed the isolated test tab, stopped the smoke Vite server and restored the event stack to its
+  initial stopped state. The normal development stack was left running unchanged. MCP evidence
+  and synthetic files were retained outside the repository under the approved temporary directory.
+  This supersedes the earlier lack of fresh browser verification below. No commits or pushes.
+
+## Frontend reliability fixes — serialized polling and bounded requests
+
+Implemented 2026-11-10; prior uncommitted Pillow security work was preserved. No new dependencies,
+frontend lockfile changes, endpoint/schema changes or backend runtime edits.
+
+- `useDocumentTracker.ts`: one cycle lock per effect lifetime, fresh abort controller only on
+  effect setup (never during teardown), per-job cancellation, and eligibility checks immediately
+  before each dispatch. Abort removed/cap-evicted jobs, discard old entry identities' results and
+  prevent stale finalizers from modifying a later lifetime. Keep the existing 2 s interval,
+  localStorage format/cap, terminal set, backoff, five-error pause and manual Retry semantics.
+- `api.ts`: 15 s deadline covers fetch plus response decoding; caller abort/timeout aborts the
+  underlying transport and settles the operation even when a test double ignores AbortSignal.
+  All deadline timers and caller listeners are cleaned in `finally`.
+- `useUpload.ts` / `UploadCard.tsx`: 120 s XHR deadline, clear timeout/abort guidance, single-settlement
+  event guards and Cancel upload during preparation/transfer. Cancellation resets the existing
+  picker; selecting a file again obtains fresh authorization. No automatic POST retry.
+- Focused tests: 6 API cases (header/body timeout, authorization timeout, pre/in-flight abort,
+  cleanup), 6 tracker cases (slow multiple jobs, queued unmount, queued removal, removal/re-addition,
+  timeout failure/continuation, StrictMode), 5 upload cases (authorization timeout, storage
+  timeout/retry, cancel authorization/storage, stale events, unmount). Existing 49 tests retained.
+
+### Actual verification
+
+- **Passed:** `npm test` and `npm run test:coverage`: **66 passed across 6 files** (+17).
+- **Passed:** ESLint, Prettier check and TypeScript/Vite production build:
+  **241.13 kB JS / 19.03 kB CSS** (gzip 75.45 / 4.80 kB).
+- Coverage: **94.26% lines**, **86.51% branches**, **91.95% statements**, **90.36% functions**;
+  App/main remain included at 0%. No exclusions or thresholds were changed.
+- Initial build caught an overly narrow mock signature in a new test; corrected before the final
+  complete frontend gate run above passed.
+
+### Remaining limitations
+
+- New reliability cases use fake timers/mock fetch and XHR, not a fresh real-browser/network run.
+  Backend/Docker/Lambda event suites are not rerun for these frontend-only changes; earlier Pillow
+  verification remains separately recorded below, not counted as a fresh run here.
+- Cancellation cannot roll back an already-created job or accepted S3 object/processing. Retrying
+  may create a second job; no cleanup/deletion endpoint was added.
+- A slow job delays later jobs in the sequential cycle, bounded by the 15 s API deadline. Existing
+  per-browser history and absence of authentication remain unchanged.
+- No commits, pushes or persistent-volume deletion.
+
+## Pillow APNG security fix — host, Docker and packaged Lambda verified
+
+Implemented 2026-11-10 for
+[GHSA-5xm2-6676-qcp9](https://github.com/advisories/GHSA-5xm2-6676-qcp9)
+(CVE-2026-112399). No commits or pushes.
+
+### Focused changes
+
+- `pyproject.toml`: changed `pillow>=12,<13` to **`pillow>=13.0.0,<14`**.
+  `uv lock --upgrade-package pillow` changed only Pillow's resolved version/artifacts and the
+  corresponding root requirement: **12.3.0 → 13.0.0**. pikepdf remains **10.18.0**; Python and
+  all other locked dependency versions are unchanged.
+- `tests/unit/test_document_validation.py`: four new cases cover both `OP_BACKGROUND` and
+  first-frame `OP_PREVIOUS` disposal. The synthetic APNG has a **100 × 100 RGBA canvas** and 1 × 1
+  first frame, with a 10-pixel test limit. A patched `Image.core.fill` raises immediately on early
+  allocation; fixed Pillow must instead raise `DecompressionBombError` without calling it.
+  Real subprocess tests assert `InvalidDocumentError(RESOURCE_LIMIT)`. Even an unpatched child
+  would attempt only a 40 KB canvas, never the advisory's multi-gigabyte dimensions.
+- `tests/events/test_event_chain.py`: the existing native PDF/PNG/JPEG completion test now also
+  checks that the Lambda ZIP contains the installed locked Pillow version's dist-info metadata.
+  This guards against a stale artifact; it passed in the recovered Docker gate recorded below.
+- Runtime validator/service/schema code, byte/pixel/dimension budgets, Linux 512 MiB address-space
+  limit, CPU limits, wall timeout, animated-image rejection, API contracts and Docker/Lambda
+  packaging policy from ADRs 0003/0004 remain unchanged. CHANGELOG records the maintenance fix.
+
+### Actual checks
+
+- **Passed:** `uv lock --upgrade-package pillow`, `uv sync --locked` on Windows CPython **3.14.7**;
+  installed Pillow **13.0.0**, pikepdf **10.18.0**.
+- **Passed:** focused real decoder suite **26 passed**: valid PDF/PNG/JPEG, corruption/mismatch,
+  encryption, animation, resource limits, worker failures and the four bounded APNG cases.
+- **Passed negative control:** separate isolated Pillow **12.3.0** environment using the exact
+  new APNG helper triggered the allocation trap in both disposal modes. No native canvas was
+  allocated by that probe; the old package was not reinstalled into the project environment.
+- **Passed:** `uv run python infra/ci/run.py quality` (all five gates); direct `uv run pytest -q`:
+  **262 passed, 57 intentional emulator opt-in skips**. The first quality run found formatting
+  in the new test; corrected and the complete quality runner passed on rerun.
+- **Passed:** direct `uv run pytest tests/integration -q`: **9 passed, 43 emulator-dependent
+  skips**, confirming isolated HTTP contracts without claiming Floci integration execution.
+  Final Ruff lint/full formatting and whitespace checks passed. Lockfile comparison confirmed
+  Pillow is the **only resolved package version** changed.
+- **Passed:** normal and event Compose configuration validation. These commands do not require
+  the engine and do **not** prove container execution.
+- **Passed dependency availability/advisory checks:** PyPI publishes Pillow 13.0.0
+  `cp314-cp314-win_amd64` and
+  `cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64` wheels (the latter's platform is
+  compatible with AL2023 glibc). OSV's exact-version query returned **no advisories** for 13.0.0
+  at check time. This is metadata/advisory evidence, not proof of loading native libraries in Lambda.
+- **Blocked:** initial `docker info` and normal `docker compose --profile test run --build --rm tests`
+  failed because `//./pipe/dockerDesktopLinuxEngine` was missing.
+- **Blocked:** `uv run python infra/ci/run.py docker` resolved both isolated configurations but
+  could not build runtime/test images. Scoped cleanup also failed with the engine unavailable.
+  **No Docker regression, compatibility or real event suite pass is claimed for this upgrade.**
+- **Verification-resume attempt (2026-11-10): blocked at the first engine health check.**
+  `docker info --format 'Server={{.ServerVersion}} OS={{.OSType}}'` again failed because the
+  `dockerDesktopLinuxEngine` pipe was missing. The retained `.ci-state.json` still names the same
+  two interrupted projects listed below. No cleanup, container build or test job was started in
+  this resume attempt; the state file and all persistent data/volumes were left intact.
+  Packaged Lambda execution with Pillow 13.0.0 remains unverified.
+
+### Latest verification — Docker recovered (2026-11-10)
+
+The following executed results supersede the earlier engine/cleanup/native-runtime blockers above.
+
+- **Passed engine preflight:** Docker **29.7.2**, Linux. Ran
+  `uv run python infra/ci/run.py cleanup` first: both retained exact-project cleanups passed.
+- **Passed full isolated gate:** `uv run python infra/ci/run.py docker`. Both resolved Compose
+  checks and runtime/test/native Lambda/event builds passed; regression **304 passed, zero skips,
+  1 unchanged strict SSE xfail**; Lambda compatibility **5 passed, zero skips**; real
+  S3/SQS/Lambda event tests **9 passed, zero skips**. The native event test completed PDF/PNG/JPEG
+  and verified Pillow **13.0.0** dist-info in the deployed ZIP. Both scoped cleanup steps passed.
+- **Passed actual packaged import/native execution:** extracted the freshly built gate's
+  `processing.zip` and loaded it inside the digest-pinned official Lambda Python 3.14 image in a
+  network-disabled, disposable container. Runtime Python **3.14.10**, Pillow **13.0.0**, pikepdf
+  **10.18.0**. Asserted `PIL.Image.__file__` was inside the extracted ZIP directory, not another
+  installed copy. Genuine PDF/PNG/JPEG validated successfully; both bounded APNG allocation traps
+  rejected before fill, and the packaged worker classified both as **RESOURCE_LIMIT (22)**.
+  No production diagnostic handler, application source change or large allocation was introduced.
+- **Passed refreshed host quality:** all five `run.py quality` gates; direct pytest **262 passed,
+  57 intentional opt-in skips**, Windows Python **3.14.7**, Pillow **13.0.0**, pikepdf **10.18.0**.
+- **Passed standard Docker suite:** **304 passed, 14 opt-in suite skips, 1 unchanged SSE xfail**.
+  Afterwards, separately, the persistence verifier **passed** across API restart and Floci
+  recreation. Docker jobs ran sequentially; persistent volumes and existing data were retained.
+- Dependency change remains only Pillow **12.3.0 → 13.0.0** with constraint `>=13.0.0,<14`.
+  Earlier safe old-version negative controls remain recorded above. All existing validation
+  limits and public contracts remain intact. No commits or pushes.
+
+### Earlier blockers and remaining risks
+
+The recovery instructions and blocked results below describe the earlier attempts; scoped cleanup
+and all requested native-runtime checks have now passed as recorded above.
+
+- Restore Docker Desktop's Linux engine, then run `uv run python infra/ci/run.py cleanup` before
+  retrying the full isolated gate. The ignored `.ci-state.json` intentionally retains exactly
+  `eddp-ci-95d1b01ad8524556-regression` and `eddp-ci-95d1b01ad8524556-events` for scoped cleanup.
+  Do not delete the state file merely to bypass cleanup; do not prune/delete persistent volumes.
+  The attempt stopped at build, before starting test services.
+- Rebuild/run `uv run python infra/ci/run.py docker` and the normal Docker suite serially. Confirm
+  real PDF/PNG/JPEG completion in the packaged Python 3.14 Lambda runtime and the new metadata guard.
+  Run the persistence verifier separately after those suites. Native-runtime execution remains
+  **unverified on Pillow 13.0.0** at that earlier point; now superseded by the successful checks above.
+- The dependency fix does not make parser subprocesses a security sandbox or provide malware
+  scanning. Windows still lacks POSIX memory/CPU limits; existing wall timeout remains intact.
+- Previously reviewed frontend development-tooling advisories and other audit findings are outside
+  this focused change. No frontend/CI redesign, automatic unrelated upgrades, API changes, commits,
+  pushes or volume deletion.
+
 ## Real application screenshots — Playwright browser capture
 
 Captured 2026-11-10 from the existing application without backend or frontend source changes.

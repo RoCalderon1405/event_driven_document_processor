@@ -8,6 +8,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from importlib.metadata import version as package_version
 from urllib.parse import quote_plus
 from uuid import UUID, uuid4
 
@@ -114,6 +115,10 @@ def test_api_post_to_native_lambda_completes_all_three_formats(event_stack, vali
         assert any("pikepdf" in name for name in native)
         assert any("PIL/_imaging" in name for name in native)
         assert not any(name.endswith(".pyd") for name in archive.namelist())
+        # Native success must come from the upgraded locked Pillow, not a stale Lambda ZIP.
+        metadata_name = f"pillow-{package_version('pillow')}.dist-info/METADATA"
+        metadata = archive.read(metadata_name).decode()
+        assert f"\nVersion: {package_version('pillow')}\n" in metadata
         unpacked = sum(info.file_size for info in archive.infolist())
     print(f"event evidence: native PDF/PNG/JPEG; ZIP={len(stack.payload)} unpacked={unpacked}")
 

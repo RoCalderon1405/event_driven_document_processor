@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — Frontend request reliability
+
+- Serialized polling cycles and lifetime-bound requests; recheck job eligibility before dispatch
+  and discard stale results after removal, re-addition or teardown. Preserve terminal stop/backoff.
+- Added 15 s API deadlines (including response bodies), 120 s storage XHR deadlines and a Cancel
+  upload control. Clean cancellation restores the picker; retries obtain fresh authorization.
+- Added 17 focused regressions (66 frontend tests total), without dependencies or API changes.
+
+## Unreleased — Pillow APNG security fix
+
+- Raised the runtime Pillow floor to 13.0.0 (`<14`), locked at 13.0.0, fixing
+  [GHSA-5xm2-6676-qcp9](https://github.com/advisories/GHSA-5xm2-6676-qcp9).
+- Added bounded tests for APNG background/previous disposal: a native-allocation trap checks that
+  oversized headers are rejected before canvas allocation, and real validator-child tests retain
+  `RESOURCE_LIMIT`. The fixture is only 100 × 100 pixels; no large-allocation reproducer is run.
+- Added a Lambda ZIP metadata assertion to the existing three-format native event test to detect
+  stale packaged Pillow versions. Security limits and public API contracts are unchanged.
+- Host quality, Docker regression, Lambda compatibility and real event gates passed after engine
+  recovery. A network-disabled official Lambda Python 3.14 container imported Pillow 13.0.0 from
+  the freshly packaged ZIP and passed native format validation plus both bounded APNG cases.
+  See the project status for exact counts, scoped cleanup and persistence evidence.
+
 ## Unreleased — Python/frontend coverage and Coveralls
 
 - Added pytest-cov application line/branch coverage and version-matched Vitest V8 coverage,
